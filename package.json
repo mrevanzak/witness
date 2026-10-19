@@ -3,13 +3,17 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.34.1",
-  "engines": { "node": ">=22.18" },
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "image:build": "docker build -t acv-computer:dev infra/computer",
     "verify:smoke": "tsx packages/computer/scripts/smoke.ts",
     "verify": "tsx apps/cli/src/main.ts",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "e2e:scripted": "tsx packages/orchestrator/scripts/scripted-e2e.ts",
+    "acceptance:phase3": "tsx packages/orchestrator/scripts/acceptance-phase3.ts"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

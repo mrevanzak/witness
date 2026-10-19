@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { DockerComputerProvider } from "@acv/computer";
-import { verify } from "@acv/orchestrator";
+import { EXIT_CODES, verifierAgent, verify } from "@acv/orchestrator";
 
 const USAGE = `Usage:
   verify run --repo <dir> [--ref HEAD] [--base <ref>] (--task "<text>" | --task-file <path>)
@@ -11,8 +11,6 @@ const USAGE = `Usage:
   verify cleanup            remove computers/networks left by crashed runs
 
 Exit codes: 0 pass, 1 fail, 2 blocked, 3 error.`;
-
-const EXIT = { pass: 0, fail: 1, blocked: 2 } as const;
 
 async function main(argv: string[]): Promise<number> {
 	const [cmd, ...rest] = argv;
@@ -48,8 +46,12 @@ async function main(argv: string[]): Promise<number> {
 		return 3;
 	}
 
-	await provider.cleanupOrphans().catch(() => 0);
 	const bootOnly = values["boot-only"] || task.trim() === "noop";
+	if (!bootOnly && !process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
+		console.error("ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) is required for a verification run; use --boot-only to just boot the app.");
+		return 3;
+	}
+	await provider.cleanupOrphans().catch(() => 0);
 	const outcome = await verify(provider, {
 		repo: values.repo,
 		ref: values.ref,
@@ -59,7 +61,7 @@ async function main(argv: string[]): Promise<number> {
 		keep: values.keep,
 		enableVnc: values.vnc,
 		runsDir: values["runs-dir"],
-	});
+	}, bootOnly ? undefined : verifierAgent());
 
 	if (outcome.boot.status === "blocked") {
 		console.log(`BLOCKED (${outcome.boot.reason}): ${outcome.boot.detail}`);
@@ -67,10 +69,13 @@ async function main(argv: string[]): Promise<number> {
 	} else if (bootOnly) {
 		console.log(`BOOTED ${outcome.boot.url} in ${(outcome.boot.ms / 1000).toFixed(1)} s (boot only, no verdict)`);
 	} else {
-		console.log(`${outcome.overall.toUpperCase()} - ${outcome.verdictPath}`);
+		const v = JSON.parse(readFileSync(outcome.verdictPath!, "utf8")) as { criteria: Array<{ id: string; status: string; description: string; video_ts: [number, number] | null }>; usage: { usd: number } };
+		console.log(`\n${outcome.overall.toUpperCase()}`);
+		for (const c of v.criteria) console.log(`  ${c.id} ${c.status.padEnd(7)} ${c.description}${c.video_ts ? `  [${c.video_ts[0]}s-${c.video_ts[1]}s]` : ""}`);
+		console.log(`  model spend ≈ $${v.usage.usd.toFixed(2)}`);
 	}
 	console.log(`run dir: ${outcome.runDir}`);
-	return bootOnly && outcome.boot.status === "ok" ? 0 : EXIT[outcome.overall];
+	return bootOnly && outcome.boot.status === "ok" ? 0 : EXIT_CODES[outcome.overall];
 }
 
 main(process.argv.slice(2)).then(

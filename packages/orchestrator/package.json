@@ -3,9 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "dependencies": {
     "@acv/computer": "workspace:*",
-    "yaml": "2.8.1"
+    "@anthropic-ai/sdk": "0.135.0",
+    "yaml": "2.8.1",
+    "zod": "4.6.7"
   }
 }

@@ -7,6 +7,7 @@ import type {
 	PageSnapshot,
 	RecordingResult,
 	Screenshot,
+	ShotOptions,
 } from "./types.ts";
 
 /** HTTP client for the computer's control server (infra/computer/control). */
@@ -39,6 +40,9 @@ export class ControlClient {
 		const actionAt = h.get("x-action-at");
 		return {
 			png: Buffer.from(await res.arrayBuffer()),
+			mime: h.get("content-type") === "image/jpeg" ? "image/jpeg" : "image/png",
+			width: Number(h.get("x-width")),
+			height: Number(h.get("x-height")),
 			cursor: { x: Number(h.get("x-cursor-x")), y: Number(h.get("x-cursor-y")) },
 			at: Number(h.get("x-at")),
 			actionAt: actionAt ? Number(actionAt) : undefined,
@@ -50,11 +54,11 @@ export class ControlClient {
 		return res.json() as Promise<{ ok: boolean; browser: boolean; recording: boolean }>;
 	}
 
-	async screenshot(): Promise<Screenshot> {
-		return ControlClient.toScreenshot(await this.req("POST", "/screenshot", {}));
+	async screenshot(opts: ShotOptions = {}): Promise<Screenshot> {
+		return ControlClient.toScreenshot(await this.req("POST", "/screenshot", opts));
 	}
 
-	async act(action: Action & { settle_ms?: number }): Promise<Screenshot> {
+	async act(action: Action & { settle_ms?: number; shot?: ShotOptions }): Promise<Screenshot> {
 		const timeout = action.type === "wait" ? action.ms + 30_000 : 60_000;
 		return ControlClient.toScreenshot(await this.req("POST", "/act", action, timeout));
 	}

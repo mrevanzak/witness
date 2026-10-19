@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Control server of the computer. Bearer-token HTTP on :7070.
 //   GET  /health                      no auth; {ok, display, recording, browser}
-//   POST /screenshot                  -> image/png; X-Cursor-X/Y, X-At headers
-//   POST /act {type, ...}             xdotool action, then a fresh screenshot (as /screenshot)
+//   POST /screenshot {width, format}  -> image/png (or jpeg); X-Cursor-X/Y, X-At, X-Width/Height
+//   POST /act {type, ..., shot}       xdotool action, then a fresh screenshot (`shot` = /screenshot opts)
 //   POST /exec {cmd, timeout_ms, max_bytes, cwd, env, background, log}
 //   POST /record/start {path}         ffmpeg x11grab -> .mkv
 //   POST /record/stop                 SIGINT ffmpeg, remux to .mp4; {t0, duration, mkv, mp4}
@@ -243,9 +243,16 @@ async function cursor() {
 	return { x, y };
 }
 
-async function screenshot() {
-	const { stdout } = await run("import", ["-display", ":1", "-window", "root", "png:-"], { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 });
-	return stdout;
+// Full-resolution PNG by default; {width, format: "jpeg"} gives a downscaled copy for the model.
+async function screenshot(opts = {}) {
+	const width = opts.width ? Math.max(320, Math.min(W, int(opts.width, "width"))) : W;
+	const jpeg = opts.format === "jpeg";
+	const args = ["-display", ":1", "-window", "root"];
+	if (width !== W) args.push("-resize", `${width}x${Math.round((H * width) / W)}!`);
+	if (jpeg) args.push("-quality", String(opts.quality ?? 80));
+	args.push(jpeg ? "jpg:-" : "png:-");
+	const { stdout } = await run("import", args, { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 });
+	return { data: stdout, mime: jpeg ? "image/jpeg" : "image/png", width, height: Math.round((H * width) / W) };
 }
 
 const xdo = (...args) => run("xdotool", args.map(String));
@@ -384,28 +391,30 @@ const json = (res, status, body) => {
 	res.end(JSON.stringify(body));
 };
 
-async function sendScreenshot(res, extra = {}) {
-	const [png, c] = await Promise.all([screenshot(), cursor()]);
+async function sendScreenshot(res, opts = {}, extra = {}) {
+	const [shot, c] = await Promise.all([screenshot(opts), cursor()]);
 	res.writeHead(200, {
-		"content-type": "image/png",
+		"content-type": shot.mime,
+		"x-width": shot.width,
+		"x-height": shot.height,
 		"x-cursor-x": c.x,
 		"x-cursor-y": c.y,
 		"x-at": Date.now(),
 		...Object.fromEntries(Object.entries(extra).map(([k, v]) => [`x-${k}`, String(v)])),
 	});
-	res.end(png);
+	res.end(shot.data);
 }
 
 const drain = (buf) => buf.splice(0, buf.length);
 
 const routes = {
-	"POST /screenshot": (_req, res) => sendScreenshot(res),
+	"POST /screenshot": (_req, res, body) => sendScreenshot(res, body),
 	"POST /act": async (_req, res, body) => {
 		const at = Date.now();
 		await act(body);
 		if (body.type !== "wait") await sleep(body.settle_ms ?? SETTLE_MS);
 		if (body.screenshot === false) return json(res, 200, { at, cursor: await cursor() });
-		return sendScreenshot(res, { "action-at": at });
+		return sendScreenshot(res, body.shot ?? {}, { "action-at": at });
 	},
 	"POST /exec": async (_req, res, body) => json(res, 200, await exec(body)),
 	"POST /record/start": async (_req, res, body) => json(res, 200, startRecording(body.path)),

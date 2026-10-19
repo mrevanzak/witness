@@ -136,8 +136,8 @@ class DockerComputer implements Computer {
 	health() {
 		return this.control.health();
 	}
-	screenshot() {
-		return this.control.screenshot();
+	screenshot(opts?: Parameters<Computer["screenshot"]>[0]) {
+		return this.control.screenshot(opts);
 	}
 	act(action: Parameters<Computer["act"]>[0]) {
 		return this.control.act(action);

@@ -9,8 +9,19 @@ export type Action =
 	| { type: "scroll"; x?: number; y?: number; dx?: number; dy?: number }
 	| { type: "wait"; ms: number };
 
+export interface ShotOptions {
+	/** Downscale to this width (keeps aspect ratio). Coordinates stay in screen pixels. */
+	width?: number;
+	format?: "png" | "jpeg";
+	quality?: number;
+}
+
 export interface Screenshot {
+	/** Image bytes (PNG unless `format: "jpeg"` was requested). */
 	png: Buffer;
+	mime: "image/png" | "image/jpeg";
+	width: number;
+	height: number;
 	cursor: { x: number; y: number };
 	/** Wall-clock ms (computer clock) when the screenshot was taken. */
 	at: number;
@@ -111,8 +122,8 @@ export interface Computer {
 	/** Host URL of the noVNC live view, when enabled. */
 	readonly liveViewUrl?: string;
 	health(): Promise<{ ok: boolean; browser: boolean; recording: boolean }>;
-	screenshot(): Promise<Screenshot>;
-	act(action: Action & { settle_ms?: number }): Promise<Screenshot>;
+	screenshot(opts?: ShotOptions): Promise<Screenshot>;
+	act(action: Action & { settle_ms?: number; shot?: ShotOptions }): Promise<Screenshot>;
 	exec(req: ExecRequest): Promise<ExecResult & { pid?: number }>;
 	/** Extract a tar archive into `destDir` inside the computer (entries keep the tar's ownership). */
 	putArchive(tar: Buffer, destDir: string): Promise<void>;
