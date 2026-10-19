@@ -1,0 +1,11 @@
+{
+  "name": "@acv/orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@acv/computer": "workspace:*",
+    "yaml": "2.8.1"
+  }
+}

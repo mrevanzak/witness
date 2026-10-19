@@ -63,7 +63,7 @@ export class ControlClient {
 		return this.json(
 			"POST",
 			"/exec",
-			{ cmd: r.cmd, timeout_ms: r.timeoutMs, max_bytes: r.maxBytes, cwd: r.cwd, background: r.background, log: r.log },
+			{ cmd: r.cmd, timeout_ms: r.timeoutMs, max_bytes: r.maxBytes, cwd: r.cwd, env: r.env, background: r.background, log: r.log },
 			(r.timeoutMs ?? 30_000) + 10_000
 		);
 	}

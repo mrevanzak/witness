@@ -3,7 +3,7 @@
 //   GET  /health                      no auth; {ok, display, recording, browser}
 //   POST /screenshot                  -> image/png; X-Cursor-X/Y, X-At headers
 //   POST /act {type, ...}             xdotool action, then a fresh screenshot (as /screenshot)
-//   POST /exec {cmd, timeout_ms, max_bytes, cwd, background, log}
+//   POST /exec {cmd, timeout_ms, max_bytes, cwd, env, background, log}
 //   POST /record/start {path}         ffmpeg x11grab -> .mkv
 //   POST /record/stop                 SIGINT ffmpeg, remux to .mp4; {t0, duration, mkv, mp4}
 //   POST /browser/navigate {url}      via CDP (the visible, recorded window)
@@ -33,6 +33,12 @@ if (!TOKEN) {
 	process.exit(1);
 }
 
+// The control token is ours, not the app's or the browser's.
+const childEnv = () => {
+	const env = { ...process.env };
+	delete env.CONTROL_TOKEN;
+	return env;
+};
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -65,7 +71,7 @@ function launchChrome() {
 	const url = process.env.START_URL ?? "about:blank";
 	chrome = spawn("chromium", [...CHROME_FLAGS, url], {
 		stdio: ["ignore", openSync("/tmp/computer-logs/chromium.log", "a"), openSync("/tmp/computer-logs/chromium.log", "a")],
-		env: process.env,
+		env: childEnv(),
 	});
 	log("chromium started", chrome.pid);
 	chrome.on("exit", (code, sig) => {
@@ -295,17 +301,18 @@ async function act(a) {
 
 // ---------- exec ----------
 
-function exec({ cmd, timeout_ms = 30_000, max_bytes = 1_000_000, cwd = "/home/qa", background = false, log: logFile }) {
+function exec({ cmd, timeout_ms = 30_000, max_bytes = 1_000_000, cwd = "/home/qa", background = false, log: logFile, env: extraEnv = {} }) {
 	if (typeof cmd !== "string" || !cmd) throw httpError(400, "cmd required");
+	const env = { ...childEnv(), ...Object.fromEntries(Object.entries(extraEnv).map(([k, v]) => [k, String(v)])) };
 	if (background) {
 		const out = logFile ? openSync(safeArtifactPath(logFile), "a") : "ignore";
-		const p = spawn("bash", ["-lc", cmd], { cwd, detached: true, stdio: ["ignore", out, out], env: process.env });
+		const p = spawn("bash", ["-lc", cmd], { cwd, detached: true, stdio: ["ignore", out, out], env });
 		p.unref();
 		if (typeof out === "number") closeSync(out);
 		return Promise.resolve({ pid: p.pid });
 	}
 	return new Promise((resolveExec) => {
-		const p = spawn("bash", ["-lc", cmd], { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"], env: process.env });
+		const p = spawn("bash", ["-lc", cmd], { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"], env });
 		const chunks = { stdout: [], stderr: [] };
 		const size = { stdout: 0, stderr: 0 };
 		let truncated = false;

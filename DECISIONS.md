@@ -22,3 +22,14 @@ Choices made where the handover left room. Newest last.
 - **`/screenshot` and `/act` return `image/png`** with metadata in headers (`x-cursor-x/y`, `x-at`, `x-action-at`), not base64 JSON.
 - **`host.docker.internal:host-gateway`** is added to the computer so a host-only dev stack (local Supabase) can be reached, as the prototype needed.
 - **No CJK fonts** in the image (`fonts-noto-cjk` adds ~100 MB). Add it if a target app needs it.
+
+## Phase 2
+
+- **Source upload = `git archive <sha>:<prefix>`** (never the working tree), with tar headers rewritten to uid/gid 1000 (`chownTar`) before `putArchive`, because Docker extracts with the tar's ownership and `git archive` is all root. The app directory may be a subdirectory of its repo (`examples/todo-app`); the diff and file list are limited to that prefix.
+- **Diff base:** `--base` if given, else the merge-base with the first of `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master`; when the ref *is* on that branch, its parent.
+- **Run directory split:** `runs/<id>/` is orchestrator-owned (plan, steps, verdict, report); only `runs/<id>/computer/` is mounted at `/artifacts`. The app under test runs in the computer and must not be able to write `verdict.json`.
+- **The app runs inside the computer container** as `qa` (same 4 GB / 2 CPU budget as Chromium). Services are sibling containers on the run network with their name as DNS alias.
+- **Setup output goes to `/artifacts/setup.log`**, app output to `/artifacts/app.log`. Boot failures (`upload`, `services`, `setup`, `start`, `health`) are a `blocked` verdict with reason `app_failed_to_boot` and the log tail; the CLI exits 2.
+- **`--task noop` (or `--boot-only`)** boots, screenshots `booted.png`, and tears down without a verdict.
+- **The control token is stripped from the env of the app and Chromium.** The app runs as the same uid as the control server, so a hostile app could still read it from `/proc`; the token guards the published port and the run network, not the computer from itself.
+- **CLI runs TypeScript through tsx** (`apps/cli/bin/verify.mjs`); no build step.

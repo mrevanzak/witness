@@ -1,0 +1,8 @@
+# How the verifier boots this app (see ../../README.md).
+setup:
+  - node --version
+start: node server.mjs --port 3000
+url: http://localhost:3000
+health: http://localhost:3000/api/health
+env:
+  TODO_SEED: "Buy milk,Walk the dog"

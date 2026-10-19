@@ -145,6 +145,9 @@ class DockerComputer implements Computer {
 	exec(req: Parameters<Computer["exec"]>[0]) {
 		return this.control.exec(req);
 	}
+	async putArchive(tar: Buffer, destDir: string) {
+		await this.container.putArchive(tar, { path: destDir });
+	}
 	startRecording(path?: string) {
 		return this.control.startRecording(path);
 	}

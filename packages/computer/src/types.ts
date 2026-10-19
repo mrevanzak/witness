@@ -23,6 +23,7 @@ export interface ExecRequest {
 	timeoutMs?: number;
 	maxBytes?: number;
 	cwd?: string;
+	env?: Record<string, string>;
 	/** Detach and return immediately; output goes to `log` (a path under /artifacts). */
 	background?: boolean;
 	log?: string;
@@ -113,6 +114,8 @@ export interface Computer {
 	screenshot(): Promise<Screenshot>;
 	act(action: Action & { settle_ms?: number }): Promise<Screenshot>;
 	exec(req: ExecRequest): Promise<ExecResult & { pid?: number }>;
+	/** Extract a tar archive into `destDir` inside the computer (entries keep the tar's ownership). */
+	putArchive(tar: Buffer, destDir: string): Promise<void>;
 	startRecording(path?: string): Promise<{ startedAt: number }>;
 	stopRecording(): Promise<RecordingResult>;
 	navigate(url: string, opts?: { timeoutMs?: number }): Promise<{ at: number; url: string; status: number | null; error?: string }>;
