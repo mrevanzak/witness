@@ -1,0 +1,13 @@
+{
+  "name": "@acv/computer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "dockerode": "4.0.12"
+  },
+  "devDependencies": {
+    "@types/dockerode": "4.0.2"
+  }
+}
