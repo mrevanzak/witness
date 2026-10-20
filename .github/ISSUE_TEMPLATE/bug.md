@@ -16,4 +16,4 @@ witness run ...
 
 **The app** (framework, how it boots, your `witness.yaml` with secrets removed)
 
-**Run folder bits** (`run.log.jsonl` tail, `verdict.json`; never share `session.json` or secret env files)
+**Run folder bits** (`run.log.jsonl` tail, `verdict.json`; never share `driver.json` or secret env files)

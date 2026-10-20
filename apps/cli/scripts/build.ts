@@ -1,7 +1,7 @@
 // pnpm --filter @mrevanzak/witness build: assemble the npm package in apps/cli/dist.
 //   dist/bin/witness.mjs        the CLI with the @witness/* packages bundled in; npm deps stay external
 //   dist/bin/playwright/        the Playwright reporter read next to the bundle at runtime
-//   dist/remotion, dist/src     the Remotion composition, bundled by @remotion/cli on each render
+//   dist/remotion, dist/src     the Remotion composition, bundled by @remotion/bundler on each render
 //   dist/computer               the computer image's build context for `witness image`
 import { cp, readFile, rm } from "node:fs/promises"
 import path from "node:path"
@@ -31,12 +31,11 @@ await cp(
 	path.join(dist, "bin/playwright/reporter.cjs")
 )
 
-// render.ts renders `../remotion/index.ts` from the bundle's directory, and polished.tsx imports ../src/timeline.
-await Promise.all(
-	["index.ts", "root.tsx", "polished.tsx"].map((f) =>
-		cp(path.join(root, "packages/renderer/remotion", f), path.join(dist, "remotion", f))
-	)
-)
+// render.ts renders `../remotion/index.ts` from the bundle's directory; the composition imports ../src/timeline.
+await cp(path.join(root, "packages/renderer/remotion"), path.join(dist, "remotion"), {
+	filter: (f) => !f.endsWith("tsconfig.json"),
+	recursive: true,
+})
 await cp(path.join(root, "packages/renderer/src/timeline.ts"), path.join(dist, "src/timeline.ts"))
 
 // Same as the root build:control script, written into the shipped build context.
