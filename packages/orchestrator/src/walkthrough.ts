@@ -1,14 +1,15 @@
-// In-session mode: a walkthrough program (written by the Claude Code session that
-// explored the app, or by a human) drives the computer instead of the model. It
-// produces the same recording, step log, evidence and verdict as the agent.
-//
-//   export default Effect.gen(function* () {
-//     const w = yield* Walkthrough
-//     yield* w.criterion("C1", "feature", "...")
-//     yield* w.begin("C1")
-//     ...
-//   })
-import type { Computer, PageElement } from "@witness/computer"
+// The recorded action API behind session mode: a program fed command by command
+// by a Claude Code session drives the computer instead of the model. It produces
+// the same recording, step log, evidence and verdict as the agent.
+import type {
+	Computer,
+	ConsoleMessage,
+	NetworkEvent,
+	PageElement,
+	PageSnapshot,
+	Screenshot,
+	ShotOptions,
+} from "@witness/computer"
 import {
 	type CriterionKind,
 	type CriterionStatus,
@@ -36,6 +37,8 @@ export class Walkthrough extends Context.Service<
 	{
 		readonly config: WitnessConfig
 		readonly change: Change
+		/** The run's orchestrator-owned directory. */
+		readonly runDir: string
 		/** Declare a criterion (before `begin`). */
 		criterion: (id: string, kind: CriterionKind, description: string) => Effect.Effect<void>
 		begin: (id: string) => W<void>
@@ -52,6 +55,8 @@ export class Walkthrough extends Context.Service<
 			options?: { readonly tag?: string; readonly timeoutMs?: number }
 		) => W<PageElement>
 		type: (text: string, label: string) => W<void>
+		/** Types the config's login password; the value never appears in steps or logs. */
+		typeSecret: (label: string) => W<void>
 		key: (combo: string, label: string) => W<void>
 		scroll: (dy: number, label: string, at?: { readonly x: number; readonly y: number }) => W<void>
 		navigate: (url: string, label: string) => W<void>
@@ -60,6 +65,14 @@ export class Walkthrough extends Context.Service<
 		evaluate: <A = unknown>(expression: string) => W<A>
 		/** Polls `expression` until truthy. */
 		waitFor: (expression: string, options?: { readonly timeoutMs?: number; readonly intervalMs?: number }) => W<void>
+		/** A screenshot to look at (not evidence, not a step). */
+		screenshot: (options?: ShotOptions) => W<Screenshot>
+		/** Visible text plus interactive elements, in screen pixels. */
+		snapshot: (maxText?: number) => W<PageSnapshot>
+		/** Console messages and failed requests since the last call (also kept on the active criterion). */
+		readonly browserLogs: W<{ readonly console: readonly ConsoleMessage[]; readonly network: readonly NetworkEvent[] }>
+		/** Tail of a log under /artifacts in the computer (default app.log). */
+		appLogs: (file?: string, tail?: number) => W<string>
 		/** Full-res still for the report, with the sentence that says what it proves. Returns its path. */
 		still: (name: string, caption: string) => W<string>
 		note: (line: string) => Effect.Effect<void>
@@ -68,7 +81,7 @@ export class Walkthrough extends Context.Service<
 	}
 >()("witness/orchestrator/Walkthrough") {}
 
-/** A walkthrough program: what a `--walkthrough` file default-exports. */
+/** A program over the Walkthrough service (session mode builds one per run). */
 export type WalkthroughProgram = Effect.Effect<void, unknown, Walkthrough>
 
 export type WalkthroughOutcome = {
@@ -176,7 +189,14 @@ export const runWalkthrough = Effect.fn("runWalkthrough")(function* (
 			Effect.map((v) => v as A)
 		)
 
+	const secret = Option.flatMap(config.login, (l) => Option.fromUndefinedOr(l.password))
+
 	const service = Walkthrough.of({
+		appLogs: (file = "app.log", tail = 100) =>
+			computer.logs(file, tail).pipe(
+				Effect.mapError(failed("logs")),
+				Effect.map((t) => redact(t, secrets))
+			),
 		begin: Effect.fnUntraced(function* (id) {
 			const c = (yield* Ref.get(declared)).find((x) => x.id === id)
 			if (!c) {
@@ -202,6 +222,7 @@ export const runWalkthrough = Effect.fn("runWalkthrough")(function* (
 			)
 			yield* step("begin_criterion", beganAt, { label: `${id}: ${c.description}` })
 		}),
+		browserLogs: drainAll,
 		change,
 		click: Effect.fnUntraced(function* (x, y, label) {
 			yield* step("click", yield* act({ type: "click", x, y }), { label, x, y })
@@ -246,8 +267,15 @@ export const runWalkthrough = Effect.fn("runWalkthrough")(function* (
 		}),
 		note: (line) => Ref.update(report, (r) => ({ ...r, notes: [...r.notes, redact(line, secrets)] })),
 		preview: (line) => Ref.update(report, (r) => ({ ...r, preview: line })),
+		runDir: run.dir,
+		screenshot: (options) => computer.screenshot(options).pipe(Effect.mapError(failed("screenshot"))),
 		scroll: Effect.fnUntraced(function* (dy, label, at) {
 			yield* step("scroll", yield* act({ dy, type: "scroll", ...(at ?? {}) }, 200), { label, ...(at ?? {}) })
+		}),
+		snapshot: Effect.fnUntraced(function* (maxText = 5000) {
+			const snap = yield* computer.pageSnapshot(maxText).pipe(Effect.mapError(failed("snapshot")))
+			yield* step("page_snapshot", yield* now)
+			return snap
 		}),
 		still: Effect.fnUntraced(function* (name, caption) {
 			const s = yield* computer.screenshot().pipe(Effect.mapError(failed("screenshot")))
@@ -263,6 +291,12 @@ export const runWalkthrough = Effect.fn("runWalkthrough")(function* (
 		}),
 		type: Effect.fnUntraced(function* (text, label) {
 			yield* step("type", yield* act({ text, type: "type" }), { chars: text.length, label })
+		}),
+		typeSecret: Effect.fnUntraced(function* (label) {
+			if (Option.isNone(secret)) {
+				return yield* new WalkthroughStepFailed({ message: "witness.yaml has no login.password" })
+			}
+			yield* step("type_secret", yield* act({ text: secret.value, type: "type" }), { label })
 		}),
 		wait: Effect.fnUntraced(function* (ms, label) {
 			const at = yield* act({ ms, type: "wait" }, 0)

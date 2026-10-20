@@ -1,6 +1,6 @@
 // The verification pipeline: resolve the change, start a fresh computer in a scope,
-// boot the app, then run the agent (plan -> execute -> review) or a walkthrough,
-// and write verdict.json. The computer is torn down when the scope closes, whatever
+// boot the app, then run the agent (plan -> execute -> review), a session driven
+// command by command, or a Playwright spec, and write verdict.json. The computer is torn down when the scope closes, whatever
 // happens.
 import { type Computer, ComputerProvider } from "@witness/computer"
 import {
@@ -23,14 +23,18 @@ import { type ExecuteOptions, Executor } from "./executor.ts"
 import { Git } from "./git.ts"
 import { Model } from "./model.ts"
 import { Planner } from "./planner.ts"
+import { runPlaywrightSpec, type SpecOptions, type SpecSource } from "./playwright-spec.ts"
 import { buildVerdict, Reviewer, testerReview } from "./reviewer.ts"
 import { Steps } from "./steps.ts"
 import { makeTar } from "./tar.ts"
-import { runWalkthrough, type WalkthroughProgram } from "./walkthrough.ts"
+import { runWalkthrough, type WalkthroughOutcome, type WalkthroughProgram } from "./walkthrough.ts"
 
 export type VerifyMode =
 	| { readonly _tag: "Agent"; readonly execute?: Partial<ExecuteOptions> }
-	| { readonly _tag: "Walkthrough"; readonly program: WalkthroughProgram }
+	/** A program fed command by command (`run --session`). */
+	| { readonly _tag: "Session"; readonly program: WalkthroughProgram }
+	/** A Playwright spec: a path inside the app (run at the exact commit) or a file outside the repo. */
+	| { readonly _tag: "Spec"; readonly file: string; readonly options: SpecOptions }
 	| { readonly _tag: "BootOnly" }
 
 export type VerifyOptions = {
@@ -167,38 +171,49 @@ const agentRun = Effect.fnUntraced(function* (
 	return verdict
 })
 
-const walkthroughRun = Effect.fnUntraced(function* (
-	computer: Computer,
-	config: WitnessConfig,
-	change: Change,
-	program: WalkthroughProgram
-) {
-	const run = yield* CurrentRun
-	yield* computer.startRecording("raw.mkv")
-	yield* computer.act({ action: { ms: 600, type: "wait" } })
-	const outcome = yield* runWalkthrough(computer, config, change, program)
-	yield* computer.act({ action: { ms: 800, type: "wait" } }).pipe(Effect.ignore)
-	const rec = yield* computer.stopRecording
-	const t0 = Option.fromNullOr(rec.t0)
-	yield* Steps.use((s) => s.finalize(t0))
-	const report = new WalkthroughReport({
-		...outcome.report,
-		stills: outcome.report.stills.map((s) =>
-			Option.isSome(t0) ? { ...s, t: Math.round((s.at - t0.value) / 100) / 10 } : s
-		),
+/** Records `produce` (a session or a spec) and builds the verdict from the steps and criteria it reports. */
+const scriptedRun = <E, R>(computer: Computer, modelId: string, produce: Effect.Effect<WalkthroughOutcome, E, R>) =>
+	Effect.gen(function* () {
+		const run = yield* CurrentRun
+		yield* computer.startRecording("raw.mkv")
+		yield* computer.act({ action: { ms: 600, type: "wait" } })
+		const outcome = yield* produce.pipe(Effect.tapError(() => computer.stopRecording.pipe(Effect.ignore)))
+		yield* computer.act({ action: { ms: 800, type: "wait" } }).pipe(Effect.ignore)
+		const rec = yield* computer.stopRecording
+		const t0 = Option.fromNullOr(rec.t0)
+		yield* Steps.use((s) => s.finalize(t0))
+		const report = new WalkthroughReport({
+			...outcome.report,
+			stills: outcome.report.stills.map((s) =>
+				Option.isSome(t0) ? { ...s, t: Math.round((s.at - t0.value) / 100) / 10 } : s
+			),
+		})
+		yield* run.writeJson("plan.json", Plan, outcome.plan)
+		yield* run.writeJson("walkthrough.json", WalkthroughReport, report)
+		const usage = { cacheRead: 0, cacheWrite: 0, input: 0, output: 0, requests: 0, usd: 0 }
+		return buildVerdict({
+			duration: Option.some(rec.duration),
+			exec: outcome.exec,
+			modelId,
+			plan: outcome.plan,
+			review: testerReview(outcome.exec, report.notes.join("\n")),
+			t0,
+			usage,
+		})
 	})
-	yield* run.writeJson("plan.json", Plan, outcome.plan)
-	yield* run.writeJson("walkthrough.json", WalkthroughReport, report)
-	const usage = { cacheRead: 0, cacheWrite: 0, input: 0, output: 0, requests: 0, usd: 0 }
-	return buildVerdict({
-		duration: Option.some(rec.duration),
-		exec: outcome.exec,
-		modelId: "in-session",
-		plan: outcome.plan,
-		review: testerReview(outcome.exec, report.notes.join("\n")),
-		t0,
-		usage,
-	})
+
+/** Which spec to run: the archived copy when the file is part of the app at this commit, else the file itself. */
+const specSource = Effect.fnUntraced(function* (file: string, repo: Change["repo"]) {
+	const fs = yield* FileSystem.FileSystem
+	const path = yield* Path.Path
+	const git = yield* Git
+	const real = yield* fs.realPath(path.resolve(file))
+	const appRoot = yield* fs.realPath(path.join(repo.root, repo.prefix))
+	const rel = path.relative(appRoot, real)
+	if (!(rel.startsWith("..") || path.isAbsolute(rel)) && Option.isSome(yield* git.showFile(repo, rel))) {
+		return { _tag: "Repo", path: rel } satisfies SpecSource
+	}
+	return { _tag: "File", name: path.basename(real), text: yield* fs.readFileString(real) } satisfies SpecSource
 })
 
 /** Runs one verification. Requires Git, ComputerProvider, FileSystem/Path, and Model in agent mode. */
@@ -251,6 +266,14 @@ export const verify = Effect.fn("verify")(function* (opts: VerifyOptions) {
 	}
 	const { config, staged } = loaded
 	const change: Change = { ...partial, configText: loaded.text }
+	let spec: SpecSource | undefined
+	if (opts.mode._tag === "Spec") {
+		const found = yield* specSource(opts.mode.file, repo).pipe(Effect.result)
+		if (found._tag === "Failure") {
+			return yield* blockedOutcome("spec_missing", `cannot read the spec ${opts.mode.file}: ${found.failure.message}`)
+		}
+		spec = found.success
+	}
 	yield* run.writeText("change.diff", change.diff)
 	const source = yield* git.archive(repo)
 	yield* run.log("source", { bytes: source.length })
@@ -314,8 +337,19 @@ export const verify = Effect.fn("verify")(function* (opts: VerifyOptions) {
 						verdict: Option.none(),
 					} satisfies VerifyOutcome
 				}
-				case "Walkthrough":
-					return yield* done(yield* walkthroughRun(computer, config, change, opts.mode.program))
+				case "Session":
+					return yield* done(
+						yield* scriptedRun(computer, "in-session", runWalkthrough(computer, config, change, opts.mode.program))
+					)
+				case "Spec":
+					return yield* scriptedRun(
+						computer,
+						"playwright",
+						runPlaywrightSpec(computer, config, change, spec!, opts.mode.options)
+					).pipe(
+						Effect.flatMap(done),
+						Effect.catchTag("SpecFailed", (e) => blockedOutcome(e.reason, e.message, e.logTail))
+					)
 				case "Agent":
 					return yield* done(yield* agentRun(computer, config, change, opts.mode))
 			}

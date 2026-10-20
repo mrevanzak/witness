@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-import { register } from "node:module"
-import { pathToFileURL } from "node:url"
 // witness: independent, recorded QA for code changes.
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { ComputerProvider, DockerComputerProvider } from "@witness/computer"
@@ -11,7 +9,6 @@ import {
 	runLayer,
 	type VerifyMode,
 	verify,
-	type WalkthroughProgram,
 	writeComparisonReport,
 	writeReport,
 } from "@witness/orchestrator"
@@ -24,6 +21,7 @@ import { drive } from "./drive.ts"
 import { init } from "./init.ts"
 import { startLive } from "./live.ts"
 import { publish } from "./publish.ts"
+import { ACTIONS, act, DAEMON_ENV, launchSession, sessionProgram } from "./session.ts"
 import { upload } from "./upload.ts"
 
 /** The CLI was used wrongly (missing task, bad walkthrough file). */
@@ -33,25 +31,6 @@ const setExit = (code: number) =>
 	Effect.sync(() => {
 		process.exitCode = code
 	})
-
-const loadWalkthrough = Effect.fn("loadWalkthrough")(function* (file: string) {
-	const path = yield* Path.Path
-	// Walkthroughs import `effect` and `@witness/*` from Witness's own copies, wherever they live.
-	yield* Effect.sync(() =>
-		register(new URL("./walkthrough-hooks.mjs", import.meta.url), { data: { parentURL: import.meta.url } })
-	)
-	const mod = yield* Effect.tryPromise({
-		catch: (e) =>
-			new UsageError({ message: `cannot load walkthrough ${file}: ${e instanceof Error ? e.message : String(e)}` }),
-		try: () => import(pathToFileURL(path.resolve(file)).href) as Promise<{ default?: unknown }>,
-	})
-	if (!Effect.isEffect(mod.default)) {
-		return yield* new UsageError({
-			message: `${file} must default-export an Effect program (see skills/witness/walkthrough-template.ts)`,
-		})
-	}
-	return mod.default as WalkthroughProgram
-})
 
 const run = Command.make(
 	"run",
@@ -83,6 +62,24 @@ const run = Command.make(
 		ref: Flag.String("ref").pipe(Flag.withDescription("Commit, branch or tag to verify"), Flag.withDefault("HEAD")),
 		repo: Flag.String("repo").pipe(Flag.withDescription("App directory inside a git repo"), Flag.withDefault(".")),
 		runsDir: Flag.String("runs-dir").pipe(Flag.withDefault("runs")),
+		session: Flag.Boolean("session").pipe(
+			Flag.withDescription(
+				"Session mode: boot, record, and wait for `witness act` commands from the caller (a Claude Code session drives the QA)"
+			),
+			Flag.withDefault(false)
+		),
+		sessionIdle: Flag.Int("session-idle").pipe(
+			Flag.withDescription("Close a session after this many seconds without a command"),
+			Flag.withDefault(900)
+		),
+		slowMo: Flag.Int("slow-mo").pipe(
+			Flag.withDescription("Walkthrough mode: pause after each Playwright action so the video can be followed (ms)"),
+			Flag.withDefault(400)
+		),
+		specTimeout: Flag.Int("spec-timeout").pipe(
+			Flag.withDescription("Walkthrough mode: stop the spec after this many seconds"),
+			Flag.withDefault(900)
+		),
 		task: Flag.String("task").pipe(Flag.withDescription("What the change is supposed to do"), Flag.optional),
 		taskFile: Flag.FileText("task-file").pipe(Flag.withDescription("Read the task from a file"), Flag.optional),
 		vnc: Flag.Boolean("vnc").pipe(
@@ -90,7 +87,9 @@ const run = Command.make(
 			Flag.withDefault(false)
 		),
 		walkthrough: Flag.String("walkthrough").pipe(
-			Flag.withDescription("In-session mode: an Effect program that drives the app instead of the model"),
+			Flag.withDescription(
+				"Walkthrough mode: a Playwright spec drives the app (one of the app's own, run at the exact commit, or a file outside the repo)"
+			),
 			Flag.optional
 		),
 	},
@@ -102,12 +101,28 @@ const run = Command.make(
 		if (Option.isNone(task) && !bootOnly) {
 			return yield* new UsageError({ message: "--task or --task-file is required (or --boot-only)" })
 		}
-		const mode: VerifyMode = bootOnly
-			? { _tag: "BootOnly" }
-			: Option.isSome(f.walkthrough)
-				? { _tag: "Walkthrough", program: yield* loadWalkthrough(f.walkthrough.value) }
-				: { _tag: "Agent" }
+		if (f.session && (bootOnly || Option.isSome(f.walkthrough) || f.keep)) {
+			return yield* new UsageError({
+				message: "--session cannot be combined with --boot-only, --walkthrough or --keep",
+			})
+		}
 		const runsDir = path.resolve(f.runsDir)
+		const daemonRunId = Option.fromUndefinedOr(process.env[DAEMON_ENV])
+		if (f.session && Option.isNone(daemonRunId)) {
+			return yield* setExit(yield* launchSession(runsDir))
+		}
+		let mode: VerifyMode = { _tag: "Agent" }
+		if (bootOnly) {
+			mode = { _tag: "BootOnly" }
+		} else if (f.session) {
+			mode = { _tag: "Session", program: yield* sessionProgram(f.sessionIdle * 1000) }
+		} else if (Option.isSome(f.walkthrough)) {
+			mode = {
+				_tag: "Spec",
+				file: path.resolve(f.walkthrough.value),
+				options: { slowMo: f.slowMo, timeoutMs: f.specTimeout * 1000 },
+			}
+		}
 		yield* ComputerProvider.use((p) => p.cleanupOrphans).pipe(Effect.ignore)
 
 		const live = f.live ? Option.some(yield* startLive()) : Option.none()
@@ -124,7 +139,7 @@ const run = Command.make(
 		}
 		const layers = runLayer(
 			runsDir,
-			undefined,
+			Option.getOrUndefined(daemonRunId),
 			Option.match(live, { onNone: () => undefined, onSome: (l) => l.publish })
 		)
 		const options = {
@@ -244,6 +259,25 @@ const driveCmd = Command.make(
 	})
 ).pipe(Command.withDescription("Hand-drive a kept computer (run --keep) while exploring an app"))
 
+const actCmd = Command.make(
+	"act",
+	{
+		action: Argument.Literals("action", ACTIONS),
+		args: Argument.String("args").pipe(Argument.variadic()),
+		label: Flag.String("label").pipe(Flag.withDescription("Caption for the video, at most 8 words"), Flag.optional),
+		run: Flag.String("run").pipe(
+			Flag.withDescription("The session's run dir (default: the newest open session)"),
+			Flag.optional
+		),
+		runsDir: Flag.String("runs-dir").pipe(Flag.withDefault("runs")),
+	},
+	Effect.fn(function* (f) {
+		yield* setExit(
+			yield* act(f).pipe(Effect.catchTag("SessionError", (e) => Console.error(e.message).pipe(Effect.as(3))))
+		)
+	})
+).pipe(Command.withDescription("Send one recorded action to a session started with `run --session`"))
+
 const publishCmd = Command.make(
 	"publish",
 	{
@@ -335,7 +369,7 @@ const cleanup = Command.make(
 
 const witness = Command.make("witness").pipe(
 	Command.withDescription("Independent, recorded QA for code changes made by AI agents or humans"),
-	Command.withSubcommands([initCmd, run, render, report, compare, uploadCmd, driveCmd, publishCmd, cleanup])
+	Command.withSubcommands([initCmd, run, actCmd, render, report, compare, uploadCmd, driveCmd, publishCmd, cleanup])
 )
 
 const Services = Layer.mergeAll(Git.layer, DockerComputerProvider).pipe(

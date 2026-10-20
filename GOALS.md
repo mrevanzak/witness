@@ -23,7 +23,7 @@ The codebase is written in Effect 4 end to end: services and layers for every bo
 ### M3. Orchestrator in Effect
 - [x] Services: `RunStore`, `Git`, `AppBooter`, `Model` (Anthropic SDK behind an Effect service), `Planner`, `Executor`, `Reviewer`, `Walkthrough`, `Reporter`.
 - [x] Budgets, stuck detection and redaction unchanged in behaviour; walkthrough scripts are Effect programs.
-- **Check:** `pnpm e2e:scripted` gives pass for `feat/empty-title` and fail for `feat/empty-title-broken`; the PR #453 walkthrough reproduces its before/after numbers.
+- **Check:** `pnpm e2e:scripted` gives pass for `feat/empty-title` and fail for `feat/empty-title-broken`; the PR #453 walkthrough reproduces its before/after numbers (as an Effect walkthrough, since replaced by Playwright specs).
 
 ### M4. Renderer and CLI in Effect
 - [x] `witness` CLI on `effect/cli`: `run`, `render`, `report`, `drive`, `publish`, `upload`, `cleanup`.
@@ -59,6 +59,18 @@ The codebase is written in Effect 4 end to end: services and layers for every bo
 - [ ] Snapshot the computer after `setup`, keyed by lockfile + seed inputs, so repeat runs of a PR skip straight to `start`.
 - [ ] Independent mode: a faster model for the step loop, Opus for plan and review.
 - **Check:** a second run of the same PR on a heavy monorepo (Next.js + CMS + database) boots in under a minute.
+
+### M10. Claude Code drives the session
+- [x] `witness run --session` boots, records and returns once the app is up; `witness act` sends one recorded action at a time and returns a screenshot to look at; `act finish` writes the verdict.
+- [x] The skill makes session mode the default: Claude plans the criteria, tests them itself in the live view, and judges only what the recording shows.
+- [x] Idle sessions close themselves and leave open criteria blocked.
+- **Check:** driving the demo app's broken branch through `witness act` gives FAIL for C1 and PASS for C2, and `render` + `report` work on the run (done).
+
+### M11. Walkthroughs are Playwright specs
+- [x] `--walkthrough` runs a Playwright spec: one of the app's own (at the exact commit, with its config, setup projects and runner) or a file outside the repo.
+- [x] Tests become criteria, `test.step()` titles captions, attached screenshots stills; click points come from the trace.
+- [x] The Effect walkthrough format is gone; the demo and the skill template are specs.
+- **Check:** the demo spec gives FAIL/PASS on the broken branch with the cursor on the clicked button in `polished.mp4`, and an app's own spec runs with its setup project and Chromium project only (done).
 
 ### Carried over
 - [ ] Phase 3 live acceptance with the real model: `pnpm acceptance:phase3` 4/5 per fixture branch (needs `ANTHROPIC_API_KEY`).
