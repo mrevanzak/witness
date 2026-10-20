@@ -22,8 +22,8 @@ git -C <repo> rev-parse HEAD                                                    
 ## 2. Pick the boot config
 
 - The repo has `witness.yaml` at the ref → use it.
-- Else `$WITNESS/examples/<repo-name>/witness.yaml` → pass `--config`; run its `prepare.sh` first when present (it stages local dev keys, never hosted ones).
-- Else write one under `$WITNESS/examples/<repo-name>/` from the repo's own QA/e2e setup (`.agents/verification-e2e-pr/`, CI workflows, Playwright `webServer`), prove it with `witness run --boot-only`, and keep it.
+- Else `$WITNESS/local/<repo-name>/witness.yaml` (gitignored) → pass `--config`; run its `prepare.sh` first when present (it stages local dev keys, never hosted ones).
+- Else write one under `$WITNESS/local/<repo-name>/` from the repo's own QA/e2e setup (QA docs, CI workflows, Playwright `webServer`), prove it with `witness run --boot-only`, and keep it.
 
 Heavy stacks (Next + CMS builds) need `--memory-gb 9 --cpus 6`.
 

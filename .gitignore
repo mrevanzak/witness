@@ -11,9 +11,8 @@ out/
 # staged local secrets
 examples/*/sb.env
 
-# Employer-specific / third-party material kept local, out of this repo
-examples/moumint/
-infra/publish/
+# Private configs for your own apps (witness.yaml, staged keys) stay out of the repo
+local/
 infra/computer/control/dist/
 .dev.vars
 .wrangler/

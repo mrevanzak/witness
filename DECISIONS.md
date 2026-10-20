@@ -1,48 +1,50 @@
 # Decisions
 
-Choices made where the handover left room. Newest last.
+Choices that shaped Witness and why. When you change one, update it here.
 
-## Answers to the open questions (2026-10-19)
+## Scope
 
-1. **Host:** macOS with OrbStack (arm64). Bridge IPs are not reachable from macOS, so the control server's port 7070 is published on host loopback with an ephemeral port (`127.0.0.1:<random>`) and protected by a per-run bearer token. Inside the run network it is still `computer:7070`.
-2. **First stack:** moumint (Next.js + Strapi + Supabase), using the knowledge in `moumint-monorepo/.agents/verification-e2e-pr/` (the Claude-Code-driven prototype). The demo `examples/todo-app` comes first.
-3. **API key:** not set yet; needed from Phase 3.
-4. **Trigger:** a Claude Code skill (`skills/witness`) plus the CLI. The skill has two modes: `independent` (default; runs this verifier's own agent loop in Docker) and `in-session` (the Claude Code session drives the browser itself, like the prototype) for when Docker or an API key is unavailable. Both publish to the PR **description** between `<!-- witness:start/end -->` markers when the PR is the current user's, otherwise as a comment.
-5. **Media hosting:** GitHub `user-attachments` through the PR comment box in Ego (the prototype's `github-upload.mjs`) when run from the skill on a dev machine; in a GitHub Action, the GIF/video go up as a workflow artifact linked from the description.
-6. **Video frame:** the real Chromium window chrome (tabs + address bar) is recorded and kept in the polished video.
+- **Web apps on a Linux desktop only.** Mobile apps and Windows/macOS guests are out of scope for now.
+- **Independent by design.** The verifier never edits the code under test, never runs git or a shell for the model, and never trusts claims in commit messages, PR bodies or docs. It reports what it observed.
+- **One run, one computer.** A fresh container per run, destroyed at the end. Nothing carries over between runs; clean state is what makes the evidence trustworthy.
 
-## Phase 1
+## Stack
 
-- **Control server in Node, not Python.** Node 22 is in the image anyway; it shares the CDP code (`playwright-core` `connectOverCDP`) with the browser endpoints. No build step: plain `.mjs`.
-- **The control server owns Chromium and ffmpeg.** `start.sh` (PID 1) owns Xvfb, dbus, portals, fluxbox, VNC. On SIGTERM it forwards to the control server, which stops ffmpeg with SIGINT, remuxes to `.mp4`, and exits; measured `docker stop` ≈ 0.6–0.7 s while recording.
-- **Chromium runs with `--no-sandbox --test-type`.** With `CapDrop ALL` + `no-new-privileges` Chromium cannot build its own sandbox; the container is the sandbox. `--test-type` hides the "unsupported flag" infobar so it does not show in videos.
-- **`t0` from `-copyts`.** x11grab stamps frames with wall-clock time; `-copyts` keeps it in `raw.mkv`, and the first packet's pts is the exact capture time of the first frame (typically 200–700 ms after ffmpeg spawns). The `.mp4` remux drops the offset (starts at 0). Steps store absolute `at` (computer clock) and `t = (at - t0) / 1000` is computed when the recording stops. Side effect: `raw.mkv` reports an epoch-sized start time in players; `raw.mp4` is the artifact to watch.
-- **Screen coordinates for DOM elements** come from `window.screenX + (outerWidth - innerWidth)/2` and `screenY + (outerHeight - innerHeight)` (Chromium's tab strip + toolbar height, 87 px at 1080p). Assumes devicePixelRatio 1, which Xvfb gives.
-- **Page snapshot refs** index `window.__witnessRefs` in the page (no DOM attributes added), valid until the next snapshot.
-- **`/screenshot` and `/act` return `image/png`** with metadata in headers (`x-cursor-x/y`, `x-at`, `x-action-at`), not base64 JSON.
-- **`host.docker.internal:host-gateway`** is added to the computer so a host-only dev stack (local Supabase) can be reached, as the prototype needed.
-- **No CJK fonts** in the image (`fonts-noto-cjk` adds ~100 MB). Add it if a target app needs it.
+- **Effect 4 end to end.** Every boundary is a `Context.Service` with a `Layer`: the computer, the control server inside it, git, the model, the planner, the executor, the reviewer, walkthroughs, the CLI and the Worker. Expected failures are `Schema.TaggedError`s with specific tags (`AppBootFailed`, `ControlError`, `ModelBudgetExceeded`, `ReportNotFound`). Data crossing a boundary goes through `Schema`: `witness.yaml`, run artifacts, the control protocol, model output, page snapshots, the report API. Pure math (zoom, pacing, tar headers, range parsing, diff fitting) stays plain functions.
+- **A computer's lifetime is a `Scope`.** `ComputerProvider.create` acquires the network and container and releases them when the scope closes, so a run can't leak a container on any exit path. `--keep` swaps the release for a log line.
+- **Remotion for the video.** The composition is React; the driver that renders it is Effect. Remotion's license (free up to three people per company) is called out in the README.
 
-## Phase 2
+## The computer
 
-- **Source upload = `git archive <sha>:<prefix>`** (never the working tree), with tar headers rewritten to uid/gid 1000 (`chownTar`) before `putArchive`, because Docker extracts with the tar's ownership and `git archive` is all root. The app directory may be a subdirectory of its repo (`examples/todo-app`); the diff and file list are limited to that prefix.
-- **Diff base:** `--base` if given, else the merge-base with the first of `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master`; when the ref *is* on that branch, its parent.
-- **Run directory split:** `runs/<id>/` is orchestrator-owned (plan, steps, verdict, report); only `runs/<id>/computer/` is mounted at `/artifacts`. The app under test runs in the computer and must not be able to write `verdict.json`.
-- **The app runs inside the computer container** as `qa` (same 4 GB / 2 CPU budget as Chromium). Services are sibling containers on the run network with their name as DNS alias.
-- **Setup output goes to `/artifacts/setup.log`**, app output to `/artifacts/app.log`. Boot failures (`upload`, `services`, `setup`, `start`, `health`) are a `blocked` verdict with reason `app_failed_to_boot` and the log tail; the CLI exits 2.
-- **`--task noop` (or `--boot-only`)** boots, screenshots `booted.png`, and tears down without a verdict.
-- **The control token is stripped from the env of the app and Chromium.** The app runs as the same uid as the control server, so a hostile app could still read it from `/proc`; the token guards the published port and the run network, not the computer from itself.
-- **CLI runs TypeScript through tsx** (`apps/cli/bin/witness.mjs`); no build step.
+- **Plain container, no special service.** Xvfb, fluxbox and Chromium, recorded with ffmpeg `x11grab`, driven by a control server on port 7070 with a per-run bearer token. Hardened: uid 1000, `CapDrop ALL`, `no-new-privileges`, memory and swap capped together, CPU and PID limits, 512 MB `/dev/shm`, its own bridge network.
+- **Chromium runs with `--no-sandbox --test-type`.** With every capability dropped it can't build its own sandbox; the container is the sandbox. `--test-type` hides the infobar that would otherwise appear in every video.
+- **The control port is published on host loopback** with an ephemeral port, because macOS can't reach Docker bridge IPs. The token is stripped from the environment of the app and Chromium. The app runs as the same uid, so a hostile app could still read it from `/proc`; the token guards the port and the run network, not the computer from itself.
+- **`t0` comes from `-copyts`.** x11grab stamps frames with wall-clock time, so the first packet's timestamp is the exact capture time of the first frame. Steps store wall-clock `at` (computer clock) and get `t = (at - t0) / 1000` when the recording stops. The `.mp4` remux starts at zero.
+- **Shutdown finalises the recording.** `docker stop` reaches the control server, whose recorder finalizer stops ffmpeg with SIGINT and remuxes. Measured under one second.
+- **The app comes from `git archive` of the exact commit**, never the working tree, with tar headers rewritten to uid 1000 so `pnpm install` works as the non-root user.
+- **`runs/<id>/` is the orchestrator's; only `runs/<id>/computer/` is mounted.** The app under test can't write `verdict.json`.
 
-## Phase 3
+## Verifying
 
-- **Model:** `claude-opus-5-5` (override with `WITNESS_MODEL`), adaptive thinking (always on for this model), effort `high` for plan and review, `medium` for the execution loop. Server-side refusal fallback on (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`; `WITNESS_FALLBACKS=0` turns it off). Cost cap per run `WITNESS_MAX_USD` (default $5), tracked from `usage` at list prices; `usage.json` per run.
-- **Custom tools, not Anthropic's computer toolset.** We already own the screen, the coordinate mapping and the step log; custom strict tools let us add `page_snapshot`/`click_element`, `begin/end_criterion`, `type_secret` and read-only log tools, and nothing that edits code or runs a shell.
-- **The model sees 1280×720 JPEGs** of the 1920×1080 screen; coordinates are scaled ×1.5 on the way in and out. Evidence stills are full-res PNGs. Only the last visible action in a turn returns an image.
-- **Append-only history** (required by preserved thinking on this model), with server-side context editing (`clear_tool_uses_20250919`, trigger 60k input tokens, keep 8 tool uses, never clearing `begin/end_criterion`) instead of trimming old screenshots ourselves, plus top-level prompt caching.
-- **Secrets:** the login password is never shown to the model; `type_secret` types it. Labels and `type` text containing it are rejected; every log, step, transcript and verdict is redacted.
-- **Navigation is limited** to the app's host, `localhost`/`127.0.0.1` and service names.
-- **Untrusted content** (diff, README, PR body, page text, console, app log) is wrapped in `<untrusted kind=…>` and the system prompts say it is data.
-- **Budgets:** 90 visible actions per run, 25 per criterion (warning in the tool result; force-ended as `blocked` at +5), 10 min wall time, cost cap; stuck detector warns after 3 identical actions with an unchanged screenshot. Criteria left open when the loop stops are `blocked` with the reason (`forced`), and the reviewer cannot override a forced block.
-- **Verdict:** a separate reviewer call (structured output) checks each claimed status against the final screenshot, step captions, console/network errors and the app log, and writes the explanation. `overall` is computed by code: fail if any criterion fails, else blocked if any is blocked (an unverified criterion never yields pass), else pass.
-- **Acceptance status:** `pnpm e2e:scripted` (a scripted `Model` driving the real computer on both fixture branches) passes: `pass` for `feat/empty-title`, `fail` for `feat/empty-title-broken`, with video timestamps and evidence. **The live acceptance (`pnpm acceptance:phase3`, 4/5 per branch with the real model) has not run yet: no API key on this machine.** Phases 4-5 were built on the scripted runs' artifacts, which have the same shape; this deviates from "do not start a phase before the previous one's acceptance passes" and must be closed before relying on verdicts.
+- **Model:** `claude-opus-5-5` by default (`WITNESS_MODEL`), adaptive thinking, effort `high` for planning and review and `medium` for the tester loop, server-side refusal fallback on, and a per-run cost cap (`WITNESS_MAX_USD`, default $5).
+- **Custom strict tools, not the computer-use toolset.** Witness owns the screen, the coordinate mapping and the step log, and needs tools the toolset doesn't have: `page_snapshot` + `click_element`, `begin/end_criterion`, `type_secret` and read-only logs.
+- **The model sees 1280x720 JPEGs** of the 1920x1080 screen; coordinates scale by 1.5 each way. Evidence stills are full-resolution PNGs.
+- **Append-only conversation** with server-side context editing to drop old screenshots, and prompt caching on the prefix.
+- **Structured outputs come from Effect Schema.** The planner and reviewer send `Schema.toJsonSchemaDocument` as the output format and decode the reply with the same schema.
+- **The overall verdict is code, not the model.** Any failed criterion fails the run; anything unverified blocks it; a criterion the orchestrator force-ended (budget, wall time) stays blocked whatever the reviewer says.
+- **Secrets:** the test password never reaches the model (`type_secret` types it). Labels or typed text containing it are rejected, and every log, step, transcript, report and live event is redacted.
+- **Everything from the repo and the page is untrusted** and is wrapped in `<untrusted>` tags in prompts. Navigation is limited to the app's host, `localhost` and service names.
+- **Walkthrough mode** exists for paths a person or a coding session already knows, and for before/after measurements the model can't take. A walkthrough file default-exports an Effect program; a module resolution hook lets it import `effect` and `@witness/*` from anywhere.
+
+## Outputs
+
+- **Video look:** dark neutral canvas, IBM Plex, the app in a hairline frame, a criteria rail that fills in, captions under the frame instead of over the app, source timecode, and an evidence tape with one segment per criterion.
+- **Live view:** run log and step events go through `CurrentRun.publish` into a `PubSub` and out as Server-Sent Events with a replay buffer. The desktop is noVNC lite, view-only, with its status bar cropped off; websockify listens on all interfaces inside the container while the published port stays on host loopback.
+- **PR publishing:** your own PR gets the report in its description between `<!-- witness:start -->` and `<!-- witness:end -->` (replaced on re-runs, inserted above bot footers); someone else's PR gets a comment. Media upload goes through the PR's comment box in a browser signed in to GitHub, so images and video are hosted by GitHub.
+- **Hosted reports:** a Cloudflare Worker with media in R2 and rows in D1. Report ids are 22 random base62 characters (about 131 bits) and the only thing granting access; pages send `noindex` and `no-referrer`. Uploads need a bearer token compared in constant time. Media supports HTTP ranges so the video seeks. Each criterion's recording time is mapped onto the polished video at upload, so the page's time buttons jump to where the check is shown.
+
+## Configuration
+
+- **`witness.yaml`** is snake_case on disk and decodes to a camelCase config with defaults applied. Unknown keys are errors.
+- **Verifier-side configs** (`--config`) may stage host files and a secret env file. A config inside the repo under test may not, so a PR can't make Witness read files from your machine.
+- **Private configs for your own apps live in `local/`**, which is gitignored.

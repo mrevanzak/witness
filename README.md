@@ -1,24 +1,162 @@
-# witness
+# Witness
 
-An independent verifier for code changes made by AI coding agents or humans. For each run it boots a fresh Linux desktop in Docker, starts the app at the changed ref, plans checks from the task + diff, uses the app like a QA tester, records the session, and writes a verdict with evidence (video timestamps, screenshots, console errors, app logs).
+Witness checks a code change the way a QA tester would, then hands you the evidence. Point it at a branch or a pull request. It boots the app in a fresh Linux desktop, works out what the change should do, uses the app with a mouse and keyboard, and records everything. You get a verdict per criterion, stills, a short edited video, and a report you can drop into the PR or share as a link.
 
-See `DECISIONS.md` for design choices.
+It never edits code and it doesn't take the coding agent's word for anything. It only reports what it saw.
+
+## Why I built this
+
+Cursor's cloud agents were the inspiration. They test their own work and attach a video, and lately I was using them mostly for that part: QA. Witness is that part on its own, with two differences I care about.
+
+- It is independent. The thing being checked is never the thing doing the checking.
+- It works on any branch or PR, whether Claude Code, Cursor, Codex, Devin or a person wrote it.
+
+## What a run gives you
+
+| Output | What it is |
+|---|---|
+| `verdict.json` | pass, fail or blocked for each criterion, with timestamps into the recording and an explanation |
+| `polished.mp4` | a 30 to 60 second video: zooms on each click, captions, a checklist that fills in, a freeze on every failure |
+| `report.md` | a "Manual verification" section with captioned stills, ready for a PR description |
+| a hosted report | an unlisted page with the video, criteria you can click to jump to, stills and logs |
+| a live view | while it runs, a local page that streams the desktop next to the checklist |
 
 ## Quick start
 
+You need Docker (OrbStack works well on macOS), Node 22.18 or newer, pnpm 10, and ffmpeg.
+
 ```bash
+git clone https://github.com/mrevanzak/witness && cd witness
 pnpm install
-pnpm image:build     # the computer image (infra/computer)
-pnpm verify:smoke    # Phase 1 acceptance: desktop + Chromium + click + recording
+pnpm image:build          # the computer image: Xvfb, Chromium, ffmpeg, control server
+pnpm witness:smoke        # boots a computer, clicks a button, records, tears down
 ```
 
-## Layout
+Try it on the demo app. `make-fixture.sh` creates a small repo with a correct and a broken implementation of the same change.
 
-| Path | What |
+```bash
+bash examples/todo-app/make-fixture.sh
+pnpm witness run --repo runs/fixtures/todo-app --ref feat/empty-title-broken --base main \
+  --task "Empty todo titles show 'Title is required' and are not added" \
+  --walkthrough examples/todo-app/walkthrough.ts --live
+pnpm witness render runs/<run-id>
+pnpm witness report runs/<run-id>
+```
+
+`--live` opens the live view. The run exits with 0 for pass, 1 for fail, 2 for blocked and 3 for usage errors, so it slots into scripts and CI.
+
+## Two ways to drive a run
+
+**Independent mode** is the default and needs `ANTHROPIC_API_KEY`. Witness asks Claude to plan two to six criteria from the task and the diff, including at least one regression check. A separate tester loop then works through them using screenshots, and a reviewer call checks each claimed result against the final screenshot, the console and the app log. The overall verdict is computed by code: any failure fails the run, anything unchecked blocks it.
+
+**Walkthrough mode** (`--walkthrough file.ts`) is for when a person or a coding session already knows the path. The file is an Effect program that declares criteria and drives the app through the same recorded tools.
+
+```ts
+import { Walkthrough } from "@witness/orchestrator"
+import { Effect } from "effect"
+
+export default Effect.gen(function* () {
+	const w = yield* Walkthrough
+	yield* w.criterion("C1", "feature", "An empty title shows 'Title is required'")
+	yield* w.begin("C1")
+	yield* w.clickText("Add todo", "Submit with an empty title")
+	const error = yield* w.evaluate<string>(`document.getElementById("title-error")?.textContent ?? ""`)
+	yield* w.still("empty-title", `After submitting an empty title, the form shows "${error}".`)
+	yield* w.end("C1", error.includes("Title is required") ? "pass" : "fail", `Saw "${error}".`)
+})
+```
+
+Walkthroughs are also how you get before and after comparisons. Run the same file against the base commit and the change, then `witness compare <before-run> <after-run> --out report/`.
+
+## Using it from Claude Code
+
+`skills/witness` is a Claude Code skill. Link it into `~/.claude/skills/witness` and ask Claude to "verify PR 123" or run `/witness`. It picks the mode, boots the app, explores when it needs to, writes a walkthrough, renders the video and returns the report. It only touches the PR when you ask it to publish.
+
+## Telling Witness how to boot your app
+
+Add `witness.yaml` to the repo (or keep one outside it and pass `--config`).
+
+```yaml
+setup:
+  - pnpm install --frozen-lockfile
+  - pnpm db:migrate && pnpm db:seed
+start: pnpm start --port 3000
+url: http://localhost:3000
+health: http://localhost:3000/api/health   # defaults to url
+services:                                  # sibling containers on the run's network
+  postgres: { image: postgres:16, env: { POSTGRES_PASSWORD: test }, port: 5432 }
+env:
+  DATABASE_URL: postgres://postgres:test@postgres:5432/postgres
+login:                                     # optional test account
+  email: qa@example.com
+  password: qa-password                    # never shown to the model, never logged
+timeouts: { setup: 900, boot: 180 }
+```
+
+A config passed with `--config` can also stage files from your machine into the app (`files`) and load secret env from a file (`secret_env`). Witness redacts those values from every log, step, transcript and report. A `witness.yaml` inside the repo under test cannot do either.
+
+## Commands
+
+| Command | What it does |
 |---|---|
-| `infra/computer` | Dockerfile, `start.sh` (PID 1), control server (`control/control.mjs`) |
-| `packages/computer` | `ComputerProvider` interface + `DockerComputerProvider` |
-| `packages/orchestrator` | RunManager, AppBooter, agent loop, verdict |
-| `packages/renderer` | Remotion composition (polished video) + `report.html` |
-| `apps/cli` | `witness run --repo . --ref HEAD --task "..."` |
-| `examples/todo-app` | demo app + `witness.yaml` used in tests |
+| `witness run` | verify a ref: boot, check, record, write the verdict (`--live`, `--walkthrough`, `--boot-only`, `--keep`) |
+| `witness render <run>` | render `polished.mp4` and `preview.gif` |
+| `witness report <run>` | write `report.md` |
+| `witness compare <before> <after> --out <dir>` | a before/after report folder |
+| `witness upload <run> [<after-run>]` | publish a hosted report and print its URL |
+| `witness publish --pr <n> --report <file>` | put a report in your PR's description, or comment on someone else's PR |
+| `witness drive <run> <action>` | poke at a computer kept with `--keep` while you explore |
+| `witness cleanup` | remove computers and networks left behind by crashed runs |
+
+## Hosted reports on Cloudflare
+
+`apps/web` is a Cloudflare Worker. Media lives in R2, report rows in D1. Report links use 22-character random ids and are unlisted: anyone with the link can view, nothing is indexed.
+
+```bash
+cd apps/web
+npx wrangler login
+npx wrangler r2 bucket create witness-reports
+npx wrangler d1 create witness            # put the id in wrangler.jsonc
+npx wrangler d1 migrations apply witness --remote
+npx wrangler secret put UPLOAD_TOKEN
+npx wrangler deploy
+```
+
+Then set `WITNESS_REPORTS_URL` and `WITNESS_UPLOAD_TOKEN` where you run the CLI. For local work, `pnpm --filter @witness/web dev` runs the Worker with local R2 and D1.
+
+## How it works
+
+Each run gets its own computer: a Docker container with Xvfb, a window manager and Chromium, on its own network, as a non-root user with every capability dropped and fixed memory, CPU and process limits. A small control server inside takes screenshots, sends input through xdotool, records the screen with ffmpeg and reads the page over the Chrome DevTools Protocol. The app runs inside the same container from a `git archive` of the exact commit, never your working tree. When the run ends, the computer, its services and its network are removed.
+
+The codebase is TypeScript on [Effect](https://effect.website) 4. The computer, the orchestrator, the CLI, the control server and the Worker are services and layers with typed errors and schema-checked data at every boundary. The video is a [Remotion](https://www.remotion.dev) composition over the raw recording.
+
+```
+apps/cli              witness command
+apps/web              Cloudflare Worker for hosted reports
+packages/domain       schemas shared by everything: config, plan, steps, verdict, report API
+packages/computer     the computer: Docker provider, control client, in-image control server
+packages/orchestrator boot, plan, test, review, walkthroughs, reports
+packages/renderer     timeline math and the Remotion composition
+infra/computer        the computer image
+examples/todo-app     demo app with a correct and a broken branch
+skills/witness        the Claude Code skill
+```
+
+Design decisions and their reasons are in [DECISIONS.md](DECISIONS.md). What's done and what's next is in [GOALS.md](GOALS.md).
+
+## Status
+
+Early. The pipeline is tested end to end with a scripted model and with walkthroughs, on the demo app and on a real Next.js + Strapi + Supabase monorepo. The live acceptance run with the real model (4 of 5 correct verdicts per fixture branch) hasn't been run yet. Treat independent-mode verdicts as a second opinion until it has.
+
+Only web apps for now. Mobile apps and non-Linux guests are out of scope.
+
+## Licenses
+
+Witness is MIT licensed. One dependency needs a look before you adopt it: Remotion, which renders the polished video, is source-available under the [Remotion License](https://github.com/remotion-dev/remotion/blob/main/LICENSE.md). It is free for individuals and for companies of up to three people; larger companies need a Remotion company license to render videos. Everything else Witness does (the verdict, stills, reports, live view) works without rendering.
+
+## Credits
+
+- [Cursor's cloud agents](https://cursor.com) for the idea of attaching proof to a change.
+- [Rakazo](https://github.com/elie222/rakazo) for the one-computer-per-agent design: a plain container with Xvfb, a window manager and Chromium, behind a small control API.
+- [tonkotsuboy/github-upload-image-to-pr](https://github.com/tonkotsuboy/github-upload-image-to-pr) for the trick of uploading PR media through the comment box.
+- [noVNC](https://novnc.com) for the live view.

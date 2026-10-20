@@ -50,7 +50,7 @@ The codebase is written in Effect 4 end to end: services and layers for every bo
 - [ ] Persistent pnpm store volume shared across runs.
 - [ ] Snapshot the computer after `setup`, keyed by lockfile + seed inputs, so repeat runs of a PR skip straight to `start`.
 - [ ] Independent mode: a faster model for the step loop, Opus for plan and review.
-- **Check:** a second run of the same moumint PR boots in under a minute.
+- **Check:** a second run of the same PR on a heavy monorepo (Next.js + CMS + database) boots in under a minute.
 
 ### Carried over
 - [ ] Phase 3 live acceptance with the real model: `pnpm acceptance:phase3` 4/5 per fixture branch (needs `ANTHROPIC_API_KEY`).
