@@ -379,12 +379,13 @@ export const init = Effect.fn("init")(function* (o: {
 	const evidence = yield* evidenceFor(o.evidence)
 	const drafted = draftConfig(yield* readFacts(repo))
 	const draft: Draft = {
-		config: { ...drafted.config, evidence },
+		config: { ...drafted.config, evidence, states: "before-after" },
 		notes: [
 			...drafted.notes,
 			evidence === "pr"
 				? "`evidence: pr`: `witness publish` uploads stills and the video into the PR. Change it to `hosted` for a hosted report page."
 				: "`evidence: hosted`: `witness upload` makes a hosted report page and `witness publish` links it from the PR. Change it to `pr` to put the media in the PR itself.",
+			"`states: before-after`: every run also checks the base commit first, so reviewers see the app before and after the change. Change it to `after` to record the change alone (one boot instead of two); `witness run --states` overrides it per run.",
 		],
 	}
 	const text = renderDraft(draft)

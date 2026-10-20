@@ -47,6 +47,14 @@ Runs are recorded under `.witness/runs/` at the root of the git repo you run `wi
 
 Each run opens a live view in your browser: the desktop as it happens, next to the checklist and the step log. Pass `--no-live` to skip it; CI never opens one. The run exits with 0 for pass, 1 for fail, 2 for blocked and 3 for usage errors, so it slots into scripts and CI.
 
+## Before and after
+
+By default every run checks the app twice: first at the base commit, then with the change, in two fresh computers and against the same criteria. Reviewers see what the app did before the change next to what it does now, and a fix shows the bug it fixes. The base commit's run lives in `<run>/before/`; `render`, `report` and `upload` pick it up on their own, so the report pairs each still with its before, shows both verdicts per criterion and includes both videos. Only the change's verdict sets the exit code. If the base commit can't boot, the report says so and shows the change alone.
+
+Set `states: after` in `witness.yaml` to record only the change (one boot instead of two), or pick per run with `witness run --states before-after|after`. A run with no base to compare with (no `--base` and no default branch) records the change alone.
+
+The two sides run one after the other. Walkthrough and independent runs can take `--parallel` to check both commits at once, in two computers: roughly half the wall time, twice the memory and CPU at the same moment (`--memory-gb` and `--cpus` apply to each), and the live view shows only the change. Sessions always go in order, since the change's session checks the criteria declared on the base commit.
+
 ## Three ways to drive a run
 
 **Session mode** (`--session`) lets the coding agent you already use do the testing. `witness run --session` boots the app, starts recording and returns once the app is up. The agent then sends one action at a time with `witness act`, reads the screenshot each one returns, and records its verdicts. Every action goes through the same recorded tools as the other modes, so the video, captions, stills and verdict come out the same. No API key is needed; this is what the Claude Code skill uses.
@@ -63,7 +71,7 @@ pnpm witness act end C1 fail "Saw the error, but the counter went from 2 to 3."
 pnpm witness act finish                                    # prints the verdict, exits 0/1/2
 ```
 
-A session with no command for 15 minutes closes itself and leaves its open criteria blocked.
+With before and after on, the first session is the base commit. `act finish` records it, boots the change with the same criteria declared, and returns once the second session is ready; check each criterion again there (reuse still names so they pair up) and `act finish` once more. A session with no command for 15 minutes closes itself and leaves its open criteria blocked.
 
 **Independent mode** is the default and needs `ANTHROPIC_API_KEY`. Witness asks Claude to plan two to six criteria from the task and the diff, including at least one regression check. A separate tester loop then works through them using screenshots, and a reviewer call checks each claimed result against the final screenshot, the console and the app log. The overall verdict is computed by code: any failure fails the run, anything unchecked blocks it.
 
@@ -87,11 +95,11 @@ test("Submitting an empty title shows 'Title is required' and adds nothing", asy
 
 The spec can be one of the app's own e2e specs. It then runs from the source at the exact commit, with the app's own `playwright.config` and `@playwright/test`. Or it can be a file outside the repo, written for Witness. Witness keeps the config's projects and setup, runs one Chromium project headed on the recorded display, and ignores `webServer`, since the app is already running.
 
-Walkthroughs are also how you get before and after comparisons. Run the same spec against the base commit and the change, then `witness compare <before-run> <after-run> --out report/`.
+A walkthrough runs the same spec on the base commit and on the change, so its before and after line up step for step. To compare two runs you made separately (two branches, say), use `witness compare <before-run> <after-run> --out report/`.
 
 ## Using it from Claude Code
 
-`skills/witness` is a Claude Code skill. Link it into `~/.claude/skills/witness` and ask Claude to "verify PR 123" or run `/witness`. Claude boots the app in a session, plans the criteria from the diff, tests them itself while you watch in the live view, renders the video and returns the report. For before/after comparisons it writes the path as a Playwright spec and runs it on both refs. It only touches the PR when you ask it to publish.
+`skills/witness` is a Claude Code skill. Link it into `~/.claude/skills/witness` and ask Claude to "verify PR 123" or run `/witness`. Claude boots the app in a session, plans the criteria from the diff, tests them itself while you watch in the live view, renders the video and returns the report. It checks the base commit first, then the change, so the report shows both. It only touches the PR when you ask it to publish.
 
 ## Telling Witness how to boot your app
 
@@ -120,6 +128,7 @@ login:                                     # optional test account
   password: qa-password                    # never shown to the model, never logged
 timeouts: { setup: 900, boot: 180 }
 evidence: hosted                           # or pr: where `publish` puts screenshots and video
+states: before-after                       # or after: also check the base commit (the default), or only the change
 ```
 
 A config passed with `--config` can also stage files from your machine into the app (`files`) and load secret env from a file (`secret_env`). Witness redacts those values from every log, step, transcript and report. A `witness.yaml` inside the repo under test cannot do either.
@@ -129,12 +138,12 @@ A config passed with `--config` can also stage files from your machine into the 
 | Command | What it does |
 |---|---|
 | `witness init` | draft a `witness.yaml` for an app Witness hasn't run before, and choose where evidence is published |
-| `witness run` | verify a ref: boot, check, record, write the verdict (`--session`, `--walkthrough`, `--boot-only`, `--keep`, `--no-live`) |
+| `witness run` | verify a ref: boot, check, record, write the verdict, after checking the base commit the same way (`--session`, `--walkthrough`, `--states`, `--parallel`, `--boot-only`, `--keep`, `--no-live`) |
 | `witness act <action>` | send one recorded action to a `--session` run (`click-ref`, `type`, `begin`, `end`, `still`, `finish`, …) |
-| `witness render <run>` | render `polished.mp4` and `preview.gif`. With `evidence: hosted` (or `--layout hosted`) the app fills the frame and captions go to `captions.vtt`, since the report page shows the criteria |
-| `witness report <run>` | write `report.md` |
+| `witness render <run>` | render `polished.mp4` and `preview.gif` (for the run and its `before/`). With `evidence: hosted` (or `--layout hosted`) the app fills the frame and captions go to `captions.vtt`, since the report page shows the criteria |
+| `witness report <run>` | write `report.md`, a before/after report when the run has a `before/` |
 | `witness compare <before> <after> --out <dir>` | a before/after report folder |
-| `witness upload <run> [<after-run>]` | publish a hosted report, print its URL and write `hosted-section.md` for the PR |
+| `witness upload <run> [<after-run>]` | publish a hosted report (with the run's `before/`, or the two runs given), print its URL and write `hosted-section.md` for the PR |
 | `witness publish --pr <n> --report <file>` | put a report in your PR's description, or comment on someone else's PR |
 | `witness drive <run> <action>` | poke at a computer kept with `--keep` while you explore |
 | `witness cleanup` | remove computers and networks left behind by crashed runs |

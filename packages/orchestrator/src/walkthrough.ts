@@ -98,7 +98,9 @@ export const runWalkthrough = Effect.fn("runWalkthrough")(function* (
 	computer: Computer,
 	config: WitnessConfig,
 	change: Change,
-	program: WalkthroughProgram
+	program: WalkthroughProgram,
+	/** Criteria already declared (carried over from the before run), so the program only checks them. */
+	carried: Plan["criteria"] = []
 ) {
 	const run = yield* CurrentRun
 	const steps = yield* Steps
@@ -106,7 +108,10 @@ export const runWalkthrough = Effect.fn("runWalkthrough")(function* (
 	const failed = (what: string) => (e: { readonly message: string }) =>
 		new WalkthroughStepFailed({ message: `${what}: ${e.message}` })
 
-	const declared = yield* Ref.make<readonly Plan["criteria"][number][]>([])
+	const declared = yield* Ref.make<readonly Plan["criteria"][number][]>(carried)
+	for (const c of carried) {
+		yield* run.log("criterion.declared", { description: c.description, id: c.id, kind: c.kind })
+	}
 	const results = yield* Ref.make(new Map<string, CriterionResult>())
 	const active = yield* Ref.make<Option.Option<string>>(Option.none())
 	const report = yield* Ref.make({
@@ -233,10 +238,12 @@ export const runWalkthrough = Effect.fn("runWalkthrough")(function* (
 			return el
 		}),
 		config,
+		// Declaring an id again replaces it in place (a carried-over criterion reworded).
 		criterion: (id, kind, description) =>
-			Ref.update(declared, (d) => [...d, { description, evidence: "", how_to_check: "", id, kind }]).pipe(
-				Effect.andThen(run.log("criterion.declared", { description, id, kind }))
-			),
+			Ref.update(declared, (d) => {
+				const c = { description, evidence: "", how_to_check: "", id, kind }
+				return d.some((x) => x.id === id) ? d.map((x) => (x.id === id ? c : x)) : [...d, c]
+			}).pipe(Effect.andThen(run.log("criterion.declared", { description, id, kind }))),
 		end: Effect.fnUntraced(function* (id, status, notes) {
 			if (!(yield* Ref.get(results)).has(id)) {
 				return yield* new WalkthroughStepFailed({ message: `criterion ${id} was not begun` })

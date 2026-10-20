@@ -50,6 +50,13 @@ export type Login = typeof Login.Type
 export const EvidenceDestination = Schema.Literals(["pr", "hosted"])
 export type EvidenceDestination = typeof EvidenceDestination.Type
 
+/**
+ * Which states of the app a run records: the base commit and then the change
+ * (`before-after`, so reviewers see both), or the change alone (`after`).
+ */
+export const EvidenceStates = Schema.Literals(["before-after", "after"])
+export type EvidenceStates = typeof EvidenceStates.Type
+
 const Seconds = Schema.Finite.pipe(Schema.check(Schema.isGreaterThan(0)))
 
 /** The file shape (snake_case keys, as written in YAML). */
@@ -71,6 +78,7 @@ const ConfigFile = Schema.Struct({
 	services: Schema.Record(ServiceName, ServiceSpec).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
 	setup: Schema.Union([NonEmpty, Schema.Array(NonEmpty)]).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 	start: NonEmpty,
+	states: EvidenceStates.pipe(Schema.withDecodingDefaultKey(Effect.succeed("before-after" as const))),
 	timeouts: Schema.Struct({
 		boot: Seconds.pipe(Schema.withDecodingDefaultKey(Effect.succeed(180))),
 		setup: Seconds.pipe(Schema.withDecodingDefaultKey(Effect.succeed(900))),
@@ -92,6 +100,7 @@ export const WitnessConfig = Schema.Struct({
 	services: Schema.Record(Schema.String, Schema.toType(ServiceSpec)),
 	setup: Schema.Array(Schema.String),
 	start: Schema.String,
+	states: EvidenceStates,
 	timeouts: Schema.Struct({ bootSec: Schema.Number, setupSec: Schema.Number }),
 	url: Schema.String,
 })
@@ -118,6 +127,7 @@ const ConfigFromFile = ConfigFile.pipe(
 				services: f.services,
 				setup: typeof f.setup === "string" ? [f.setup] : f.setup,
 				start: f.start,
+				states: f.states,
 				timeouts: { bootSec: f.timeouts.boot, setupSec: f.timeouts.setup },
 				url: f.url,
 			}),
@@ -127,6 +137,7 @@ const ConfigFromFile = ConfigFile.pipe(
 				services: c.services,
 				setup: c.setup,
 				start: c.start,
+				states: c.states,
 				url: c.url,
 				...Option.match(c.login, { onNone: () => ({}), onSome: (login) => ({ login }) }),
 				files: c.files,

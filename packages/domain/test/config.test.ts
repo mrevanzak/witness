@@ -68,6 +68,18 @@ describe("parseWitnessConfig", () => {
 		failsWith("start: x\nurl: http://localhost:3000\nevidence: slack\n", "ConfigInvalidError", /evidence/)
 	)
 
+	it.effect("records before and after unless states says after", () =>
+		Effect.gen(function* () {
+			const byDefault = yield* parseWitnessConfig("start: x\nurl: http://localhost:3000\n")
+			assert.strictEqual(byDefault.states, "before-after")
+			const after = yield* parseWitnessConfig("start: x\nurl: http://localhost:3000\nstates: after\n")
+			assert.strictEqual(after.states, "after")
+		})
+	)
+	it.effect("rejects unknown states", () =>
+		failsWith("start: x\nurl: http://localhost:3000\nstates: before\n", "ConfigInvalidError", /states/)
+	)
+
 	it.effect("rejects invalid YAML", () => failsWith("start: [unclosed", "ConfigParseError", /not valid YAML/))
 	it.effect("requires url", () => failsWith("start: x", "ConfigInvalidError", /url/))
 	it.effect("requires start", () => failsWith("url: http://a", "ConfigInvalidError", /start/))

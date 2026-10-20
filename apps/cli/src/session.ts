@@ -7,6 +7,10 @@
 // `run --session` detaches the run into a background process and returns once
 // the session is ready (or the app failed to boot), so the caller needs no
 // background shell.
+//
+// With `states: before-after` the first session is the base commit (in
+// `<runDir>/before/`). Finishing it boots the change in a second session with the
+// same criteria declared, and `act finish` returns once that one is ready.
 
 import { spawn } from "node:child_process"
 import { randomBytes } from "node:crypto"
@@ -14,8 +18,14 @@ import { openSync } from "node:fs"
 import { createServer } from "node:http"
 import { NodeHttpServer } from "@effect/platform-node"
 import { type PageElement, SCREEN_W } from "@witness/computer"
-import { CriterionKind, CriterionStatus, EXIT_CODES } from "@witness/domain"
-import { newRunId, Walkthrough, type WalkthroughProgram, WalkthroughStepFailed } from "@witness/orchestrator"
+import { CriterionKind, CriterionStatus, EXIT_CODES, Plan, RunInfo } from "@witness/domain"
+import {
+	BEFORE_DIR,
+	newRunId,
+	Walkthrough,
+	type WalkthroughProgram,
+	WalkthroughStepFailed,
+} from "@witness/orchestrator"
 import { Clock, Console, Deferred, Effect, FileSystem, Layer, Option, Path, Ref, Schema, Semaphore } from "effect"
 import {
 	HttpClient,
@@ -314,8 +324,10 @@ const findSession = Effect.fnUntraced(function* (run: Option.Option<string>, run
 	const root = path.resolve(runsDir)
 	const names = yield* fs.readDirectory(root).pipe(Effect.orElseSucceed(() => [] as string[]))
 	for (const name of [...names].sort().reverse()) {
-		if (yield* fs.exists(path.join(root, name, "driver.json")).pipe(Effect.orElseSucceed(() => false))) {
-			return path.join(root, name)
+		for (const dir of [path.join(root, name, BEFORE_DIR), path.join(root, name)]) {
+			if (yield* fs.exists(path.join(dir, "driver.json")).pipe(Effect.orElseSucceed(() => false))) {
+				return dir
+			}
 		}
 	}
 	return yield* new SessionError({ message: `no open session under ${root}; start one with \`witness run --session\`` })
@@ -341,19 +353,72 @@ const printVerdict = Effect.fnUntraced(function* (runDir: string) {
 	return EXIT_CODES[v.overall]
 })
 
-/** Waits up to `timeoutMs` for `file` to exist. */
-const waitFor = (file: string, timeoutMs: number) =>
+/** Waits up to `timeoutMs` for one of `files` to exist and returns it. */
+const waitFor = (files: readonly string[], timeoutMs: number) =>
 	Effect.gen(function* () {
 		const fs = yield* FileSystem.FileSystem
 		const deadline = (yield* Clock.currentTimeMillis) + timeoutMs
 		while ((yield* Clock.currentTimeMillis) < deadline) {
-			if (yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false))) {
-				return true
+			for (const file of files) {
+				if (yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false))) {
+					return Option.some(file)
+				}
 			}
 			yield* Effect.sleep("500 millis")
 		}
-		return false
+		return Option.none<string>()
 	})
+
+/** The before/after side a session's run dir is on, its commit, and (after) the criteria carried over. */
+const sideOf = Effect.fnUntraced(function* (dir: string) {
+	const fs = yield* FileSystem.FileSystem
+	const path = yield* Path.Path
+	const read = <A, I>(file: string, schema: Schema.Codec<A, I>) =>
+		fs
+			.readFileString(file)
+			.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(schema))), Effect.option)
+	const sha = Option.match(yield* read(path.join(dir, "run.json"), RunInfo), {
+		onNone: () => "",
+		onSome: (i) => i.sha.slice(0, 7),
+	})
+	const none: readonly string[] = []
+	if (path.basename(dir) === BEFORE_DIR) {
+		return { carried: none, sha, side: "before" as const }
+	}
+	if (!(yield* fs.exists(path.join(dir, BEFORE_DIR)))) {
+		return { carried: none, sha, side: "single" as const }
+	}
+	const plan = yield* read(path.join(dir, BEFORE_DIR, "plan.json"), Plan)
+	const carried = Option.match(plan, { onNone: () => [], onSome: (p) => p.criteria.map((c) => c.id) })
+	return { carried, sha, side: "after" as const }
+})
+
+/** What `run --session` and `act finish` print once a session can take commands. */
+const readyText = (s: {
+	readonly side: "before" | "after" | "single"
+	readonly sha: string
+	readonly carried: readonly string[]
+}) =>
+	[
+		"",
+		...(s.side === "before"
+			? [
+					`BEFORE: the base commit ${s.sha} is up, without the change. Declare your criteria and check them here first.`,
+					"`act finish` records this side, then boots the change with the same criteria declared. Reuse still names there so they pair up in the report.",
+				]
+			: []),
+		...(s.side === "after"
+			? [
+					`AFTER: the change ${s.sha} is up${s.carried.length ? `, with ${s.carried.join(", ")} declared from the before run` : ""}. Check each criterion again, reusing the before run's still names.`,
+				]
+			: []),
+		"SESSION READY. Drive it with `witness act <action> [args] [--label <caption>]`:",
+		"  criterion <id> feature|regression <description>   begin <id>   end <id> pass|fail|blocked <notes>",
+		"  shot | snapshot | click <x> <y> | click-ref <ref> | click-text <text> | type <text> | type-secret",
+		"  key <combo> | scroll <dy> [x y] | navigate <url> | wait <ms> | eval <js> | console | logs [tail]",
+		"  still <name> <caption> | note <line> | preview <line> | intro <line> | finish",
+		`Coordinates are in ${SHOT_W}x${(SHOT_W * 9) / 16} screenshot pixels.`,
+	].join("\n")
 
 /** `witness act`: sends one command to an open session. Returns the exit code. */
 export const act = Effect.fn("act")(function* (opts: {
@@ -397,10 +462,25 @@ export const act = Effect.fn("act")(function* (opts: {
 	if (opts.action !== "finish") {
 		return 0
 	}
-	if (!(yield* waitFor(path.join(runDir, "verdict.json"), 120_000))) {
+	if (Option.isNone(yield* waitFor([path.join(runDir, "verdict.json")], 120_000))) {
 		return yield* new SessionError({ message: `no verdict.json in ${runDir} after 2 minutes; see session.log` })
 	}
-	return yield* printVerdict(runDir)
+	const code = yield* printVerdict(runDir)
+	if (path.basename(runDir) !== BEFORE_DIR) {
+		return code
+	}
+	// The base commit is recorded (its verdict is evidence, not the result); the change boots next.
+	const afterDir = path.dirname(runDir)
+	yield* Console.log(`\nbooting the change (log: ${path.join(afterDir, "session.log")})`)
+	const next = yield* waitFor([path.join(afterDir, "driver.json"), path.join(afterDir, "verdict.json")], 30 * 60_000)
+	if (Option.isNone(next)) {
+		return yield* new SessionError({ message: `the change did not boot in 30 minutes; see ${afterDir}/session.log` })
+	}
+	if (path.basename(next.value) === "verdict.json") {
+		return yield* printVerdict(afterDir)
+	}
+	yield* Console.log(readyText(yield* sideOf(afterDir)))
+	return 0
 })
 
 /** Env var that marks the detached process that actually runs the session. */
@@ -442,19 +522,12 @@ export const launchSession = Effect.fn("launchSession")(function* (runsDir: stri
 	})
 	for (;;) {
 		yield* follow
-		if (yield* fs.exists(path.join(dir, "driver.json"))) {
-			yield* Console.log(
-				[
-					"",
-					"SESSION READY. Drive it with `witness act <action> [args] [--label <caption>]`:",
-					"  criterion <id> feature|regression <description>   begin <id>   end <id> pass|fail|blocked <notes>",
-					"  shot | snapshot | click <x> <y> | click-ref <ref> | click-text <text> | type <text> | type-secret",
-					"  key <combo> | scroll <dy> [x y] | navigate <url> | wait <ms> | eval <js> | console | logs [tail]",
-					"  still <name> <caption> | note <line> | preview <line> | intro <line> | finish",
-					`Coordinates are in ${SHOT_W}x${(SHOT_W * 9) / 16} screenshot pixels.`,
-				].join("\n")
-			)
-			return 0
+		// The base commit's session comes first when the run records before and after.
+		for (const d of [path.join(dir, BEFORE_DIR), dir]) {
+			if (yield* fs.exists(path.join(d, "driver.json"))) {
+				yield* Console.log(readyText(yield* sideOf(d)))
+				return 0
+			}
 		}
 		if (yield* fs.exists(path.join(dir, "verdict.json"))) {
 			yield* Effect.sleep("300 millis")
