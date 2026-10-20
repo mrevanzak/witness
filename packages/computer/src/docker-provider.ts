@@ -110,7 +110,7 @@ export const DockerComputerProvider = Layer.effect(
 					Effect.fail(
 						new ComputerImageMissingError({
 							image,
-							message: `computer image ${image} not found; build it with \`pnpm image:build\``,
+							message: `computer image ${image} not found; build it with \`witness image\` (\`pnpm image:build\` in a witness checkout)`,
 						})
 					)
 				)
