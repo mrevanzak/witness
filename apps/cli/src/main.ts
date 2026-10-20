@@ -12,6 +12,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { register } from "node:module"
 import { pathToFileURL } from "node:url"
 import { drive } from "./drive.ts"
+import { init } from "./init.ts"
 import { startLive } from "./live.ts"
 import { publish } from "./publish.ts"
 import { upload } from "./upload.ts"
@@ -188,6 +189,18 @@ const uploadCmd = Command.make(
 	})
 ).pipe(Command.withDescription("Publish a run (or a before/after pair) as an unlisted hosted report; needs WITNESS_REPORTS_URL and WITNESS_UPLOAD_TOKEN"))
 
+const initCmd = Command.make(
+	"init",
+	{
+		repo: Flag.String("repo").pipe(Flag.withDescription("The app's repo (or the folder in it that holds the app)"), Flag.withDefault(".")),
+		out: Flag.String("out").pipe(Flag.withDescription("Where to write it (default: <repo>/witness.yaml)"), Flag.optional),
+		force: Flag.Boolean("force").pipe(Flag.withDescription("Overwrite an existing file"), Flag.withDefault(false)),
+	},
+	Effect.fn(function* (f) {
+		yield* init(f).pipe(Effect.catchTag("InitError", (e) => Console.error(e.message).pipe(Effect.andThen(setExit(3)))))
+	})
+).pipe(Command.withDescription("Draft a witness.yaml from the repo's lockfile, scripts, Playwright webServer, docker compose and .env.example"))
+
 const cleanup = Command.make(
 	"cleanup",
 	{},
@@ -199,7 +212,7 @@ const cleanup = Command.make(
 
 const witness = Command.make("witness").pipe(
 	Command.withDescription("Independent, recorded QA for code changes made by AI agents or humans"),
-	Command.withSubcommands([run, render, report, compare, uploadCmd, driveCmd, publishCmd, cleanup])
+	Command.withSubcommands([initCmd, run, render, report, compare, uploadCmd, driveCmd, publishCmd, cleanup])
 )
 
 const Services = Layer.mergeAll(Git.layer, DockerComputerProvider).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)))

@@ -23,9 +23,11 @@ git -C <repo> rev-parse HEAD                                                    
 
 - The repo has `witness.yaml` at the ref → use it.
 - Else `$WITNESS/local/<repo-name>/witness.yaml` (gitignored) → pass `--config`; run its `prepare.sh` first when present (it stages local dev keys, never hosted ones).
-- Else write one under `$WITNESS/local/<repo-name>/` from the repo's own QA/e2e setup (QA docs, CI workflows, Playwright `webServer`), prove it with `witness run --boot-only`, and keep it.
+- Else this is the app's first run. Draft one: `witness init --repo <repo> --out $WITNESS/local/<repo-name>/witness.yaml`. It reads the lockfile, package scripts, Playwright `webServer`, docker compose and `.env.example`, and lists what it guessed. Finish it from the repo's own QA docs and CI workflows: services the app needs, env values, a seeded `login`, local secrets in a `secret_env` file next to it. Then prove it with `witness run … --config <it> --boot-only --no-live` until it boots, and keep it.
 
 Heavy stacks (Next + CMS builds) need `--memory-gb 9 --cpus 6`.
+
+Runs open a live view by default (the desktop, criteria and steps in the browser), so the user can watch. Pass `--no-live` for boot checks and other runs nobody needs to watch.
 
 ## 3. Pick the mode
 

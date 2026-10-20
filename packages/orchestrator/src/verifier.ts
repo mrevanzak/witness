@@ -164,7 +164,7 @@ export const verify = Effect.fn("verify")(function* (opts: VerifyOptions) {
 		context: opts.context,
 	}
 	const loaded = yield* loadConfig(opts, partial)
-	if (loaded._tag === "Missing") return yield* blockedOutcome("no_witness_yaml", `no witness.yaml at ${repo.prefix || "the repo root"} in ${repo.sha.slice(0, 7)}`)
+	if (loaded._tag === "Missing") return yield* blockedOutcome("no_witness_yaml", `no witness.yaml at ${repo.prefix || "the repo root"} in ${repo.sha.slice(0, 7)}; draft one with \`witness init\` and pass it with --config`)
 	if (loaded._tag === "Invalid") return yield* blockedOutcome("invalid_witness_yaml", loaded.message)
 	const { config, staged } = loaded
 	const change: Change = { ...partial, configText: loaded.text }
