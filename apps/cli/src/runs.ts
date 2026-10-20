@@ -1,55 +1,36 @@
 // Where runs live by default: `.witness/runs` at the git root of the current
 // directory, so evidence stays next to the project wherever the CLI is
 // installed, and `run` and `act` find the same sessions from any subfolder.
+// `.witness/` carries its own `.gitignore`, so runs never show up in `git status`.
 import { Git } from "@witness/orchestrator"
 import { Effect, FileSystem, Option, Path } from "effect"
+import { Flag } from "effect/cli"
 
-const WITNESS_DIR = ".witness"
+export const runsDirFlag = Flag.String("runs-dir").pipe(
+	Flag.withDescription("Where run folders are (default: .witness/runs at the current git root)"),
+	Flag.optional
+)
 
-/** The toplevel of the git repo containing `dir`, if it is in one. */
-const gitRoot = (dir: string) => Git.use((g) => g.toplevel(dir)).pipe(Effect.option)
+/** `.witness/` at the git root of `dir` (or `dir` itself outside a repo), created and ignoring itself. */
+export const witnessHome = Effect.fnUntraced(function* (dir: string) {
+	const fs = yield* FileSystem.FileSystem
+	const path = yield* Path.Path
+	// Not a repo, or no git at all: keep runs next to `dir`.
+	const root = yield* Git.use((g) => g.toplevel(dir)).pipe(Effect.option)
+	const home = path.join(
+		Option.getOrElse(root, () => dir),
+		".witness"
+	)
+	yield* fs.makeDirectory(home, { recursive: true })
+	yield* fs.writeFileString(path.join(home, ".gitignore"), "# Witness runs (recordings, screenshots, verdicts)\n*\n")
+	return home
+})
 
-/** --runs-dir when given, else `.witness/runs` at the current git root (or the current directory outside a repo). */
+/** --runs-dir when given, else `runs` in the current directory's `witnessHome`. */
 export const runsDirFor = Effect.fnUntraced(function* (flag: Option.Option<string>) {
 	const path = yield* Path.Path
 	if (Option.isSome(flag)) {
 		return path.resolve(flag.value)
 	}
-	const cwd = path.resolve(".")
-	return path.join(
-		Option.getOrElse(yield* gitRoot(cwd), () => cwd),
-		WITNESS_DIR,
-		"runs"
-	)
-})
-
-/** `.gitignore` text with `.witness/` added, or none when it is already ignored. */
-export const withWitnessIgnored = (text: string): Option.Option<string> => {
-	const ignored = text
-		.split("\n")
-		.map((l) => l.trim().replace(/^\//, "").replace(/\/$/, ""))
-		.includes(WITNESS_DIR)
-	if (ignored) {
-		return Option.none()
-	}
-	const sep = text === "" || text.endsWith("\n") ? "" : "\n"
-	return Option.some(`${text}${sep}# Witness runs (recordings, screenshots, verdicts)\n${WITNESS_DIR}/\n`)
-}
-
-/** Adds `.witness/` to the `.gitignore` at the git root of `dir`. Returns the file when it changed it. */
-export const ignoreWitnessDir = Effect.fnUntraced(function* (dir: string) {
-	const fs = yield* FileSystem.FileSystem
-	const path = yield* Path.Path
-	const root = yield* gitRoot(path.resolve(dir))
-	if (Option.isNone(root)) {
-		return Option.none<string>()
-	}
-	const file = path.join(root.value, ".gitignore")
-	const text = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""))
-	const next = withWitnessIgnored(text)
-	if (Option.isNone(next)) {
-		return Option.none<string>()
-	}
-	yield* fs.writeFileString(file, next.value)
-	return Option.some(file)
+	return path.join(yield* witnessHome(path.resolve(".")), "runs")
 })

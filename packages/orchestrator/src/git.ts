@@ -1,5 +1,6 @@
-// Read-only git access to the repo under test. Never touches the working tree:
-// sources come from `git archive` of the exact commit.
+// Read-only git access to the repo under test (and to find the repo the CLI
+// runs in). Never touches the working tree: sources come from `git archive` of
+// the exact commit.
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 
@@ -61,8 +62,10 @@ export class Git extends Context.Service<
 				bytes(cwd, args).pipe(Effect.map((b) => new TextDecoder().decode(b)))
 			const line = (cwd: string, args: readonly string[]) => text(cwd, args).pipe(Effect.map((s) => s.trim()))
 
+			const toplevel = (dir: string) => line(dir, ["rev-parse", "--show-toplevel"])
+
 			const resolve = Effect.fn("Git.resolve")(function* (dir: string, ref: string, base: Option.Option<string>) {
-				const root = yield* line(dir, ["rev-parse", "--show-toplevel"])
+				const root = yield* toplevel(dir)
 				const prefix = yield* line(dir, ["rev-parse", "--show-prefix"])
 				const sha = yield* line(dir, ["rev-parse", "--verify", `${ref}^{commit}`])
 				const candidates = Option.match(base, {
@@ -121,7 +124,7 @@ export class Git extends Context.Service<
 						Effect.option,
 						Effect.map((o) => o)
 					),
-				toplevel: (dir) => line(dir, ["rev-parse", "--show-toplevel"]),
+				toplevel,
 			})
 		})
 	)
