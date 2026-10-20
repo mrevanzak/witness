@@ -25,4 +25,3 @@ pnpm e2e:scripted         # the whole pipeline on the demo app, no API key neede
 
 - [Conventional Commits](https://www.conventionalcommits.org): `feat(cli): ...`, `fix(computer): ...`, `docs: ...`. The commit-msg hook checks this with commitlint.
 - Keep `pnpm check`, `pnpm typecheck` and `pnpm test` green. If you change the computer image or the pipeline, say which of `witness:smoke`, `e2e:scripted` and `acceptance:phase4` you ran.
-- New design choices go in `DECISIONS.md` with the reason.
