@@ -121,6 +121,7 @@ export const reportPage = (id: string, m: ReportManifest): string => {
 	.watch { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 24px; align-items: start; }
 	video, .novideo { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; box-shadow: 0 0 0 1px var(--hairline); }
 	.novideo { display: grid; place-items: center; color: var(--muted); font: 14px var(--mono); }
+	.watch > video, .watch > .novideo { position: sticky; top: 24px; }
 	.counts { font: 13px var(--mono); color: var(--muted); margin: 0 0 6px; }
 	.criteria { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hairline); }
 	.crit { padding: 14px 0 14px 12px; margin-left: -14px; border-left: 2px solid transparent; border-bottom: 1px solid var(--hairline); transition: border-color .2s; }
@@ -149,7 +150,7 @@ export const reportPage = (id: string, m: ReportManifest): string => {
 	footer { margin-top: 56px; font: 12px var(--mono); color: var(--faint); }
 	video::cue { font: 500 1em var(--sans); background: rgba(14, 15, 16, .82); }
 	@media (prefers-reduced-motion: reduce) { .crit { transition: none; } }
-	@media (max-width: 900px) { .crit { margin-left: 0; } .watch { grid-template-columns: 1fr; } .stills { grid-template-columns: 1fr; } h1 { font-size: 24px; } .verdict .word { font-size: 44px; } .wrap { padding: 0 16px 48px; } }
+	@media (max-width: 900px) { .crit { margin-left: 0; } .watch { grid-template-columns: 1fr; } .watch > video, .watch > .novideo { position: static; } .stills { grid-template-columns: 1fr; } h1 { font-size: 24px; } .verdict .word { font-size: 44px; } .wrap { padding: 0 16px 48px; } }
 </style>
 </head>
 <body>
