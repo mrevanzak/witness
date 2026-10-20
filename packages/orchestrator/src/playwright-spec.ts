@@ -6,25 +6,24 @@
 // maximized on the recorded display, slowed down enough to watch. Each `test()`
 // is a criterion, `test.step()` titles are captions, image attachments are stills.
 import { readFileSync } from "node:fs"
+import { posix } from "node:path"
 import type { Computer } from "@witness/computer"
-import { SCREEN_H, SCREEN_W } from "@witness/computer"
+import { CHROME_FLAGS, pageOrigin, WindowMetrics } from "@witness/computer"
 import {
+	Criterion,
 	type CriterionKind,
 	type CriterionStatus,
-	Plan,
 	redact,
+	type StepTool,
 	Still,
 	WalkthroughReport,
 	type WitnessConfig,
 } from "@witness/domain"
 import { Effect, FileSystem, Option, Path, Schema } from "effect"
-import { APP_DIR } from "./app-booter.ts"
-import type { Change } from "./change.ts"
+import { APP_DIR, qaTar, sh } from "./container.ts"
+import type { CriterionRecord, ModeRun } from "./criteria.ts"
 import { CurrentRun } from "./current-run.ts"
-import type { CriterionResult } from "./executor.ts"
 import { type StepInput, Steps } from "./steps.ts"
-import { makeTar } from "./tar.ts"
-import type { WalkthroughOutcome } from "./walkthrough.ts"
 
 /** Where the spec comes from: a path inside the app (relative to it), or a file outside the repo. */
 export type SpecSource =
@@ -47,26 +46,13 @@ export class SpecFailed extends Schema.TaggedError<SpecFailed>()("SpecFailed", {
 const REPORTER = readFileSync(new URL("./playwright/reporter.cjs", import.meta.url), "utf8")
 const BUNDLED_RUNNER = "/opt/control/node_modules/@playwright/test"
 const OUT = "/artifacts/playwright"
-const CHROME_ARGS = [
-	"--start-maximized",
-	"--window-position=0,0",
-	`--window-size=${SCREEN_W},${SCREEN_H}`,
-	"--no-sandbox",
-	"--test-type",
-	"--disable-gpu",
-	"--disable-dev-shm-usage",
-	"--no-first-run",
-	"--hide-crash-restore-bubble",
-	"--disable-features=Translate,MediaRouter",
-]
-
-// Where the page's (0, 0) lands on screen in a window like the spec's (the
-// browser's own toolbar sits above it), measured with the same Chromium and flags.
+// The window geometry of a window like the spec's (the browser's own toolbar
+// sits above the page), measured with the same Chromium and flags.
 const PROBE = `import { chromium } from "/opt/control/node_modules/playwright-core/index.mjs"
-const browser = await chromium.launch({ executablePath: "/usr/bin/chromium", headless: false, args: ${JSON.stringify(CHROME_ARGS)} })
+const browser = await chromium.launch({ executablePath: "/usr/bin/chromium", headless: false, args: ${JSON.stringify(CHROME_FLAGS)} })
 const page = await (await browser.newContext({ viewport: null })).newPage()
 await page.waitForTimeout(500)
-console.log(JSON.stringify(await page.evaluate(() => ({ x: screenX + (outerWidth - innerWidth) / 2, y: screenY + outerHeight - innerHeight }))))
+console.log(JSON.stringify(await page.evaluate(() => ({ innerHeight, innerWidth, outerHeight, outerWidth, screenX, screenY }))))
 await browser.close()`
 
 /** The config Playwright actually loads; sits next to the app's own so relative paths mean the same. */
@@ -126,6 +112,12 @@ export default {
 }
 `
 
+/** Playwright's `test.outcome()` and `TestResult.status`. */
+const Outcome = Schema.Literals(["expected", "unexpected", "flaky", "skipped"])
+type Outcome = typeof Outcome.Type
+const TestStatus = Schema.Literals(["passed", "failed", "timedOut", "skipped", "interrupted"])
+type TestStatus = typeof TestStatus.Type
+
 const Point = Schema.Struct({ at: Schema.Finite, x: Schema.Finite, y: Schema.Finite })
 const Event = Schema.Union([
 	Schema.Struct({ total: Schema.Finite, type: Schema.Literal("begin") }),
@@ -150,9 +142,9 @@ const Event = Schema.Union([
 		attachments: Schema.Array(Schema.Struct({ file: Schema.String, name: Schema.String })),
 		error: Schema.String,
 		id: Schema.String,
-		outcome: Schema.String,
+		outcome: Outcome,
 		points: Schema.Array(Point),
-		status: Schema.String,
+		status: TestStatus,
 		type: Schema.Literal("end"),
 	}),
 	Schema.Struct({ status: Schema.String, type: Schema.Literal("done") }),
@@ -160,16 +152,15 @@ const Event = Schema.Union([
 type Event = typeof Event.Type
 const decodeEvent = Schema.decodeUnknownEffect(Schema.fromJsonString(Event))
 
-const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
 const regexEscape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-const dirname = (p: string) => p.slice(0, p.lastIndexOf("/")) || "/"
-const basename = (p: string) => p.slice(p.lastIndexOf("/") + 1)
+const { basename, dirname } = posix
 const shorten = (s: string, n = 60) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
 
-const POINTER_TOOLS = new Set(["click", "double_click", "scroll"])
+/** Actions whose point the trace records. */
+const POINTER_TOOLS: ReadonlySet<StepTool> = new Set(["click", "double_click", "scroll"])
 
 /** Witness step tool for a Playwright action title, or undefined for calls that do nothing visible. */
-export const actionTool = (title: string): string | undefined => {
+export const actionTool = (title: string): StepTool | undefined => {
 	if (/^double click/i.test(title)) {
 		return "double_click"
 	}
@@ -192,7 +183,7 @@ export const actionTool = (title: string): string | undefined => {
 }
 
 /** Criterion status from Playwright's outcome and result status. */
-export const specStatus = (outcome: string, status: string): CriterionStatus => {
+export const specStatus = (outcome: Outcome, status: TestStatus): CriterionStatus => {
 	if (outcome === "expected" || outcome === "flaky") {
 		return "pass"
 	}
@@ -221,142 +212,60 @@ const defaultNotes = (
 	}
 }
 
-/** Runs the spec in the computer (recording is the caller's job) and returns the walkthrough outcome. */
-export const runPlaywrightSpec = Effect.fn("runPlaywrightSpec")(function* (
-	computer: Computer,
-	config: WitnessConfig,
-	change: Change,
-	source: SpecSource,
-	options: SpecOptions
-) {
-	const run = yield* CurrentRun
-	const steps = yield* Steps
-	const fs = yield* FileSystem.FileSystem
-	const path = yield* Path.Path
-	const secrets = yield* run.secrets
-	const failed = (reason: string) => (e: { readonly message: string }) =>
-		new SpecFailed({ logTail: "", message: e.message, reason })
-	const shell = (cmd: string, timeout_ms = 30_000) =>
-		computer.exec({ cmd, timeout_ms }).pipe(Effect.mapError(failed("spec_setup")))
+type TestEvent = Extract<Event, { type: "test" }>
+type StepEvent = Extract<Event, { type: "step" }>
+type EndEvent = Extract<Event, { type: "end" }>
 
-	// The app's playwright.config: nearest one above the spec, else anywhere shallow in the app.
-	const start = source._tag === "Repo" ? dirname(`${APP_DIR}/${source.path}`) : APP_DIR
-	const found = yield* shell(
-		`d=${sh(start)}; while :; do for f in playwright.config.ts playwright.config.mts playwright.config.js playwright.config.mjs playwright.config.cjs; do [ -f "$d/$f" ] && echo "$d/$f" && exit 0; done; [ "$d" = ${sh(APP_DIR)} ] && break; d=$(dirname "$d"); done; find ${sh(APP_DIR)} -maxdepth 3 -name 'playwright.config.*' -not -path '*/node_modules/*' | head -n 1`
-	)
-	const baseConfig = found.stdout.trim() || undefined
-	const configDir = baseConfig ? dirname(baseConfig) : APP_DIR
-	const specPath =
-		source._tag === "Repo" ? `${APP_DIR}/${source.path}` : `${configDir}/.witness/${basename(source.name)}`
-	if (source._tag === "Repo" && (yield* shell(`test -f ${sh(specPath)}`)).code !== 0) {
-		return yield* new SpecFailed({
-			logTail: "",
-			message: `${source.path} is not in the app at this commit`,
-			reason: "spec_missing",
-		})
-	}
+/** A file the spec attached, and where it goes in the run. */
+type Attachment = { readonly source: string; readonly file: string }
 
-	// The app's own @playwright/test if it has one; a staged spec may fall back to Witness's.
-	const resolved = yield* shell(
-		`cd ${sh(source._tag === "Repo" ? dirname(specPath) : configDir)} && node -p "require('path').dirname(require.resolve('@playwright/test/package.json'))" 2>/dev/null`
-	)
-	let runner = resolved.code === 0 ? resolved.stdout.trim() : ""
-	if (!runner && source._tag === "Repo") {
-		return yield* new SpecFailed({
-			logTail: "",
-			message: "the app has no @playwright/test installed; add it to setup or the app's devDependencies",
-			reason: "no_playwright",
-		})
-	}
-	const files = [
-		{
-			data: Buffer.from(wrapperConfig(baseConfig ? basename(baseConfig) : undefined)),
-			name: "witness.playwright.config.ts",
-		},
-		{ data: Buffer.from(REPORTER), name: ".witness/reporter.cjs" },
-		...(source._tag === "File" ? [{ data: Buffer.from(source.text), name: `.witness/${basename(source.name)}` }] : []),
-	]
-	yield* computer
-		.putArchive(makeTar(files, { gid: 1000, group: "qa", uid: 1000, user: "qa" }), configDir)
-		.pipe(Effect.mapError(failed("spec_setup")))
-	if (!runner) {
-		yield* shell(
-			`mkdir -p ${sh(`${configDir}/.witness/node_modules/@playwright`)} && ln -sfn ${BUNDLED_RUNNER} ${sh(`${configDir}/.witness/node_modules/@playwright/test`)}`
-		)
-		runner = BUNDLED_RUNNER
-	}
+/** What a spec's events say, before any file is copied. */
+export type SpecOutcome = {
+	readonly records: readonly CriterionRecord[]
+	readonly steps: readonly StepInput[]
+	readonly stills: readonly Still[]
+	/** Attachments to copy into the run: stills and each test's final screenshot. */
+	readonly attachments: readonly Attachment[]
+	readonly notes: readonly string[]
+	readonly preview: string
+	readonly intro: string
+}
 
-	const probe = yield* shell(`node --input-type=module -e ${sh(PROBE)}`, 60_000)
-	const offset = yield* Schema.decodeUnknownEffect(
-		Schema.fromJsonString(Schema.Struct({ x: Schema.Finite, y: Schema.Finite }))
-	)(probe.stdout.trim().split("\n").at(-1) ?? "").pipe(Effect.orElseSucceed(() => ({ x: 0, y: 0 })))
-
-	const settings = {
-		args: CHROME_ARGS,
-		out: `${OUT}/events.jsonl`,
-		outputDir: `${OUT}/output`,
-		reporter: `${configDir}/.witness/reporter.cjs`,
-		slowMo: options.slowMo,
-		specDir: dirname(specPath),
-		specName: basename(specPath),
-		url: config.url,
-		witnessSpec: source._tag === "File",
-	}
-	yield* run.log("spec.start", { config: baseConfig ?? null, offset, runner, spec: specPath })
-	const result = yield* computer
-		.exec({
-			cmd: `node ${sh(`${runner}/cli.js`)} test ${sh(regexEscape(specPath))} --config witness.playwright.config.ts`,
-			cwd: configDir,
-			env: { ...config.env, FORCE_COLOR: "0", WITNESS_PW: JSON.stringify(settings) },
-			max_bytes: 400_000,
-			timeout_ms: options.timeoutMs,
-		})
-		.pipe(Effect.mapError(failed("spec_failed")))
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: strips ANSI colours from Playwright's output
-	const output = redact(`${result.stdout}\n${result.stderr}`.replace(/\u001b\[[0-9;]*m/g, ""), secrets)
-	yield* run.writeText("playwright.log", output).pipe(Effect.mapError(failed("spec_failed")))
-	const logTail = output.trim().split("\n").slice(-40).join("\n")
-	yield* run.log("spec.done", { code: result.code, timed_out: result.timed_out })
-
-	const eventsFile = path.join(run.computerDir, "playwright", "events.jsonl")
-	const text = yield* fs.readFileString(eventsFile).pipe(Effect.orElseSucceed(() => ""))
-	const events = yield* Effect.forEach(
-		text.split("\n").filter((l) => l.trim()),
-		(line) => decodeEvent(line).pipe(Effect.option)
-	).pipe(Effect.map((all) => all.flatMap((e) => Option.toArray(e))))
-	const tests = events.filter((e): e is Extract<Event, { type: "test" }> => e.type === "test")
-	if (tests.length === 0) {
-		return yield* new SpecFailed({
-			logTail,
-			message: `the spec ran no tests (exit ${result.code}); see playwright.log`,
-			reason: "spec_no_tests",
-		})
-	}
-
-	const criteria: Plan["criteria"][number][] = []
-	const results: CriterionResult[] = []
+/**
+ * Turns the reporter's events into criteria, captioned steps and stills. Each test
+ * is a criterion, `test.step()` titles are captions, and image attachments are
+ * stills. Click points come from the trace, moved by `offset` (where the page's
+ * (0, 0) lands on screen). Pure.
+ */
+export const specOutcome = (
+	events: readonly Event[],
+	offset: { readonly x: number; readonly y: number },
+	secrets: readonly string[]
+): SpecOutcome => {
+	const tests = events.filter((e): e is TestEvent => e.type === "test")
+	const records: CriterionRecord[] = []
+	const steps: StepInput[] = []
 	const stills: Still[] = []
+	const attachments: Attachment[] = []
 	const notes: string[] = []
 	let preview = ""
 	let intro = ""
-	const timeline: StepInput[] = []
 
 	for (const [i, t] of tests.entries()) {
 		const id = `C${i + 1}`
 		const kind: CriterionKind = t.tags.includes("@regression") ? "regression" : "feature"
 		const description = t.title.replace(/\s*@[\w-]+/g, "").trim() || t.title
-		criteria.push({ description, evidence: "", how_to_check: "", id, kind })
 		const own = events.filter((e) => "id" in e && e.id === t.id)
-		const end = own.find((e): e is Extract<Event, { type: "end" }> => e.type === "end")
-		const stepEvents = own.filter((e): e is Extract<Event, { type: "step" }> => e.type === "step")
-		timeline.push({ at: t.at, criterion: id, label: `${id}: ${description}`, tool: "begin_criterion" })
+		const end = own.find((e): e is EndEvent => e.type === "end")
+		const stepEvents = own.filter((e): e is StepEvent => e.type === "step")
+		steps.push({ at: t.at, criterion: id, label: `${id}: ${description}`, tool: "begin_criterion" })
 
 		// Captions are test.step titles; actions outside any step caption themselves.
 		const points = [...(end?.points ?? [])]
 		let actions = 0
 		for (const s of stepEvents) {
 			if (s.category === "test.step") {
-				timeline.push({ at: s.at, criterion: id, label: shorten(s.title), tool: "step" })
+				steps.push({ at: s.at, criterion: id, label: shorten(s.title), tool: "step" })
 				continue
 			}
 			const tool = s.category === "pw:api" ? actionTool(s.title) : undefined
@@ -367,7 +276,7 @@ export const runPlaywrightSpec = Effect.fn("runPlaywrightSpec")(function* (
 			// A trace input point starts with its call, to the millisecond.
 			const near = POINTER_TOOLS.has(tool) ? points.findIndex((p) => Math.abs(p.at - s.at) < 250) : -1
 			const point = near >= 0 ? points.splice(near, 1)[0] : undefined
-			timeline.push({
+			steps.push({
 				at: s.at,
 				criterion: id,
 				tool,
@@ -390,24 +299,21 @@ export const runPlaywrightSpec = Effect.fn("runPlaywrightSpec")(function* (
 
 		let screenshot: string | undefined
 		for (const a of end?.attachments ?? []) {
-			const data = yield* fs
-				.readFile(path.join(run.computerDir, "playwright", a.file))
-				.pipe(Effect.mapError(failed("spec_failed")))
 			if (a.name === "screenshot") {
 				screenshot = `${id.toLowerCase()}-${status}.png`
-				yield* run.writeBytes(screenshot, data).pipe(Effect.mapError(failed("spec_failed")))
+				attachments.push({ file: screenshot, source: a.file })
 				continue
 			}
 			const file = `stills/${String(stills.length + 1).padStart(2, "0")}-${basename(a.file).replace(/^\d+-/, "")}`
-			yield* run.writeBytes(file, data).pipe(Effect.mapError(failed("spec_failed")))
 			const at =
 				stepEvents.find((s) => s.category.includes("attach") && s.title.includes(a.name))?.at ?? end?.at ?? t.at
 			stills.push(new Still({ at, caption: redact(a.name, secrets), file }))
-			timeline.push({ at, criterion: id, file, tool: "still" })
+			attachments.push({ file, source: a.file })
+			steps.push({ at, criterion: id, file, tool: "still" })
 		}
 
 		const endedAt = end?.at ?? t.at
-		timeline.push({
+		steps.push({
 			at: endedAt,
 			criterion: id,
 			label: `${id}: ${status.toUpperCase()}`,
@@ -415,13 +321,12 @@ export const runPlaywrightSpec = Effect.fn("runPlaywrightSpec")(function* (
 			status,
 			tool: "end_criterion",
 		})
-		results.push({
+		records.push({
 			beganAt: t.at,
 			console: [],
+			criterion: new Criterion({ description, id, kind }),
 			endedAt,
-			evidence: undefined,
 			forced: end ? undefined : "spec",
-			id,
 			network: [],
 			notes: criterionNotes,
 			screenshot,
@@ -430,14 +335,175 @@ export const runPlaywrightSpec = Effect.fn("runPlaywrightSpec")(function* (
 		})
 	}
 
-	for (const step of [...timeline].sort((a, b) => a.at - b.at)) {
+	return {
+		attachments,
+		intro,
+		notes,
+		preview,
+		records,
+		steps: [...steps].sort((a, b) => a.at - b.at),
+		stills: [...stills].sort((a, b) => a.at - b.at),
+	}
+}
+
+type Staged = {
+	/** The app's playwright.config the wrapper imports, if it has one. */
+	readonly baseConfig: string | undefined
+	readonly configDir: string
+	readonly specPath: string
+	readonly runner: string
+}
+
+/** Finds the app's config and runner, and stages the wrapper config, the reporter and (a file spec) the spec. */
+const stageSpec = Effect.fnUntraced(function* (
+	computer: Computer,
+	source: SpecSource,
+	shell: (
+		cmd: string,
+		timeoutMs?: number
+	) => Effect.Effect<{ readonly code: number | null; readonly stdout: string }, SpecFailed>
+) {
+	// The app's playwright.config: nearest one above the spec, else anywhere shallow in the app.
+	const start = source._tag === "Repo" ? dirname(`${APP_DIR}/${source.path}`) : APP_DIR
+	const found = yield* shell(
+		`d=${sh(start)}; while :; do for f in playwright.config.ts playwright.config.mts playwright.config.js playwright.config.mjs playwright.config.cjs; do [ -f "$d/$f" ] && echo "$d/$f" && exit 0; done; [ "$d" = ${sh(APP_DIR)} ] && break; d=$(dirname "$d"); done; find ${sh(APP_DIR)} -maxdepth 3 -name 'playwright.config.*' -not -path '*/node_modules/*' | head -n 1`
+	)
+	const baseConfig = found.stdout.trim() || undefined
+	const configDir = baseConfig ? dirname(baseConfig) : APP_DIR
+	const specPath =
+		source._tag === "Repo" ? `${APP_DIR}/${source.path}` : `${configDir}/.witness/${basename(source.name)}`
+	if (source._tag === "Repo" && (yield* shell(`test -f ${sh(specPath)}`)).code !== 0) {
+		return yield* new SpecFailed({
+			logTail: "",
+			message: `${source.path} is not in the app at this commit`,
+			reason: "spec_missing",
+		})
+	}
+
+	// The app's own @playwright/test if it has one; a staged spec may fall back to Witness's.
+	const resolved = yield* shell(
+		`cd ${sh(source._tag === "Repo" ? dirname(specPath) : configDir)} && node -p "require('path').dirname(require.resolve('@playwright/test/package.json'))" 2>/dev/null`
+	)
+	const own = resolved.code === 0 ? resolved.stdout.trim() : ""
+	if (!own && source._tag === "Repo") {
+		return yield* new SpecFailed({
+			logTail: "",
+			message: "the app has no @playwright/test installed; add it to setup or the app's devDependencies",
+			reason: "no_playwright",
+		})
+	}
+	const files = [
+		{
+			data: Buffer.from(wrapperConfig(baseConfig ? basename(baseConfig) : undefined)),
+			name: "witness.playwright.config.ts",
+		},
+		{ data: Buffer.from(REPORTER), name: ".witness/reporter.cjs" },
+		...(source._tag === "File" ? [{ data: Buffer.from(source.text), name: `.witness/${basename(source.name)}` }] : []),
+	]
+	yield* computer
+		.putArchive(qaTar(files), configDir)
+		.pipe(Effect.mapError((e) => new SpecFailed({ logTail: "", message: e.message, reason: "spec_setup" })))
+	if (!own) {
+		yield* shell(
+			`mkdir -p ${sh(`${configDir}/.witness/node_modules/@playwright`)} && ln -sfn ${BUNDLED_RUNNER} ${sh(`${configDir}/.witness/node_modules/@playwright/test`)}`
+		)
+	}
+	return { baseConfig, configDir, runner: own || BUNDLED_RUNNER, specPath } satisfies Staged
+})
+
+/** Runs the spec in the computer (recording is the caller's job) and returns what it checked. */
+export const runPlaywrightSpec = Effect.fn("runPlaywrightSpec")(function* (
+	computer: Computer,
+	config: WitnessConfig,
+	source: SpecSource,
+	options: SpecOptions
+) {
+	const run = yield* CurrentRun
+	const steps = yield* Steps
+	const fs = yield* FileSystem.FileSystem
+	const path = yield* Path.Path
+	const secrets = yield* run.secrets
+	const failed = (reason: string) => (e: { readonly message: string }) =>
+		new SpecFailed({ logTail: "", message: e.message, reason })
+	const shell = (cmd: string, timeout_ms = 30_000) =>
+		computer.exec({ cmd, timeout_ms }).pipe(Effect.mapError(failed("spec_setup")))
+
+	const staged = yield* stageSpec(computer, source, shell)
+	const probe = yield* shell(`node --input-type=module -e ${sh(PROBE)}`, 60_000)
+	const offset = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(WindowMetrics))(
+		probe.stdout.trim().split("\n").at(-1) ?? ""
+	).pipe(
+		Effect.map(pageOrigin),
+		Effect.orElseSucceed(() => ({ x: 0, y: 0 }))
+	)
+
+	const settings = {
+		args: CHROME_FLAGS,
+		out: `${OUT}/events.jsonl`,
+		outputDir: `${OUT}/output`,
+		reporter: `${staged.configDir}/.witness/reporter.cjs`,
+		slowMo: options.slowMo,
+		specDir: dirname(staged.specPath),
+		specName: basename(staged.specPath),
+		url: config.url,
+		witnessSpec: source._tag === "File",
+	}
+	yield* run.log("spec.start", {
+		config: staged.baseConfig ?? null,
+		offset,
+		runner: staged.runner,
+		spec: staged.specPath,
+	})
+	const result = yield* computer
+		.exec({
+			cmd: `node ${sh(`${staged.runner}/cli.js`)} test ${sh(regexEscape(staged.specPath))} --config witness.playwright.config.ts`,
+			cwd: staged.configDir,
+			env: { ...config.env, FORCE_COLOR: "0", WITNESS_PW: JSON.stringify(settings) },
+			max_bytes: 400_000,
+			timeout_ms: options.timeoutMs,
+		})
+		.pipe(Effect.mapError(failed("spec_failed")))
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: strips ANSI colours from Playwright's output
+	const output = redact(`${result.stdout}\n${result.stderr}`.replace(/\u001b\[[0-9;]*m/g, ""), secrets)
+	yield* run.writeText("playwright.log", output).pipe(Effect.mapError(failed("spec_failed")))
+	const logTail = output.trim().split("\n").slice(-40).join("\n")
+	yield* run.log("spec.done", { code: result.code, timed_out: result.timed_out })
+
+	const playwrightDir = path.join(run.computerDir, "playwright")
+	const text = yield* fs.readFileString(path.join(playwrightDir, "events.jsonl")).pipe(Effect.orElseSucceed(() => ""))
+	const events = yield* Effect.forEach(
+		text.split("\n").filter((l) => l.trim()),
+		(line) => decodeEvent(line).pipe(Effect.option)
+	).pipe(Effect.map((all) => all.flatMap((e) => Option.toArray(e))))
+	const outcome = specOutcome(events, offset, secrets)
+	if (outcome.records.length === 0) {
+		return yield* new SpecFailed({
+			logTail,
+			message: `the spec ran no tests (exit ${result.code}); see playwright.log`,
+			reason: "spec_no_tests",
+		})
+	}
+
+	for (const a of outcome.attachments) {
+		const data = yield* fs.readFile(path.join(playwrightDir, a.source)).pipe(Effect.mapError(failed("spec_failed")))
+		yield* run.writeBytes(a.file, data).pipe(Effect.mapError(failed("spec_failed")))
+	}
+	for (const step of outcome.steps) {
 		yield* steps.add(step).pipe(Effect.mapError(failed("spec_failed")))
 	}
-	stills.sort((a, b) => a.at - b.at)
 	return {
-		error: Option.none(),
-		exec: { console: [], criteria: results, network: [], stoppedBecause: "done", summary: "" },
-		plan: new Plan({ criteria, summary: change.task.split("\n")[0] ?? "" }),
-		report: new WalkthroughReport({ intro, notes, preview, stills }),
-	} satisfies WalkthroughOutcome
+		console: [],
+		network: [],
+		records: outcome.records,
+		report: Option.some(
+			new WalkthroughReport({
+				intro: outcome.intro,
+				notes: outcome.notes,
+				preview: outcome.preview,
+				stills: outcome.stills,
+			})
+		),
+		stoppedBecause: "done",
+		summary: "",
+	} satisfies ModeRun
 })

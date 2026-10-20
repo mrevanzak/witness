@@ -1,12 +1,19 @@
-// Shell commands as the computer's non-root user: foreground (timeout + output cap)
-// or background (the app under test), which lives until the control server stops.
+// Shell commands as the computer's non-root user: `run` to completion (timeout +
+// output cap), or `spawn` detached (the app under test), living until the control
+// server stops.
 import { Context, Duration, Effect, Fiber, Layer, Option, Scope } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
-import type { ExecRequest, ExecResult } from "../protocol.ts"
+import { messageOf } from "../message.ts"
+import {
+	type ArtifactPathError,
+	type ExecRequest,
+	type ExecResult,
+	ServerError,
+	type SpawnRequest,
+	type SpawnResult,
+} from "../protocol.ts"
 import { Artifacts } from "./artifacts.ts"
 import { childEnv } from "./browser.ts"
-import type { ArtifactPathError } from "./errors.ts"
-import { ExecError } from "./errors.ts"
 import { collectCapped } from "./proc.ts"
 
 const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
@@ -14,7 +21,8 @@ const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
 export class Exec extends Context.Service<
 	Exec,
 	{
-		run: (request: ExecRequest) => Effect.Effect<ExecResult, ExecError | ArtifactPathError>
+		run: (request: ExecRequest) => Effect.Effect<ExecResult, ServerError>
+		spawn: (request: SpawnRequest) => Effect.Effect<SpawnResult, ServerError | ArtifactPathError>
 	}
 >()("witness/computer/server/Exec") {
 	static readonly layer = Layer.effect(
@@ -22,11 +30,15 @@ export class Exec extends Context.Service<
 		Effect.gen(function* () {
 			const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
 			const artifacts = yield* Artifacts
-			// Background processes belong to the server, not to the request that started them.
+			// Spawned processes belong to the server, not to the request that started them.
 			const serverScope = yield* Effect.scope
-			const failed = (e: unknown) => new ExecError({ message: e instanceof Error ? e.message : String(e) })
+			const failed = (e: unknown) => new ServerError({ message: messageOf(e) })
 
-			const command = (r: ExecRequest, cmd: string, detach: boolean) =>
+			const command = (
+				r: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>> },
+				cmd: string,
+				detach: boolean
+			) =>
 				ChildProcess.make("bash", ["-lc", cmd], {
 					cwd: r.cwd ?? "/home/qa",
 					detached: true,
@@ -36,23 +48,15 @@ export class Exec extends Context.Service<
 					...(detach ? { stderr: "ignore" as const, stdout: "ignore" as const } : {}),
 				})
 
-			const background = Effect.fnUntraced(function* (r: ExecRequest) {
-				const log = r.log ? yield* artifacts.resolve(r.log) : undefined
-				const cmd = log ? `{ ${r.cmd} ; } >> ${shQuote(log)} 2>&1` : r.cmd
+			const spawn = Effect.fn("Exec.spawn")(function* (r: SpawnRequest) {
+				const log = yield* artifacts.resolve(r.log)
 				const handle = yield* spawner
-					.spawn(command(r, cmd, true))
+					.spawn(command(r, `{ ${r.cmd} ; } >> ${shQuote(log)} 2>&1`, true))
 					.pipe(Scope.provide(serverScope), Effect.mapError(failed))
-				return {
-					code: null,
-					pid: Number(handle.pid),
-					stderr: "",
-					stdout: "",
-					timed_out: false,
-					truncated: false,
-				} satisfies ExecResult
+				return { pid: Number(handle.pid) }
 			})
 
-			const foreground = Effect.fnUntraced(function* (r: ExecRequest) {
+			const run = Effect.fn("Exec.run")(function* (r: ExecRequest) {
 				const max = r.max_bytes ?? 1_000_000
 				const handle = yield* spawner.spawn(command(r, r.cmd, false)).pipe(Effect.mapError(failed))
 				const out = yield* Effect.forkChild(collectCapped(handle.stdout, max))
@@ -75,11 +79,7 @@ export class Exec extends Context.Service<
 				} satisfies ExecResult
 			}, Effect.scoped)
 
-			const run = Effect.fn("Exec.run")(function* (r: ExecRequest) {
-				return yield* r.background ? background(r) : foreground(r)
-			})
-
-			return Exec.of({ run })
+			return Exec.of({ run, spawn })
 		})
 	)
 }

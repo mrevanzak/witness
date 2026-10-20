@@ -1,119 +1,99 @@
-// Client for one computer's control server, on Effect HttpClient. Responses are
-// decoded with the shared protocol schemas.
-import { Effect, Option, Schema } from "effect"
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
-import type { Computer } from "./computer.ts"
+// Client for one computer's control server: the HttpApi client of ControlApi with
+// the run's base URL and bearer token, per-call timeouts, and every failure
+// folded into ControlError.
+import { type Duration, Effect, flow } from "effect"
+import { HttpClient, HttpClientRequest } from "effect/http"
+import { HttpApiClient } from "effect/http-api"
 import { ControlError } from "./computer.ts"
+import { messageOf } from "./message.ts"
 import {
 	type ActRequest,
-	ConsoleMessage,
-	ErrorBody,
-	EvaluateResult,
+	type ConsoleMessage,
+	ControlApi,
 	type ExecRequest,
-	ExecResult,
-	Health,
-	LogsResult,
-	NavigateResult,
-	NetworkEvent,
-	PageSnapshot,
-	RecordingResult,
-	RecordStartResult,
+	type ExecResult,
+	type Health,
+	type NavigateResult,
+	type NetworkEvent,
+	type PageSnapshot,
+	type RecordingResult,
+	type RecordStartResult,
 	type Screenshot,
-	ShotHeaders,
 	type ShotOptions,
+	type SpawnRequest,
+	type SpawnResult,
 } from "./protocol.ts"
 
-type ControlCalls = Omit<Computer, "id" | "runId" | "network" | "control" | "liveView" | "putArchive" | "startService">
+export type ControlClient = {
+	act: (request: ActRequest) => Effect.Effect<Screenshot, ControlError>
+	/** Console messages and page errors since the last call. */
+	readonly consoleMessages: Effect.Effect<readonly ConsoleMessage[], ControlError>
+	/** Evaluates an expression in the visible tab. For walkthroughs, never exposed to the model. */
+	evaluate: (expression: string) => Effect.Effect<unknown, ControlError>
+	/** Runs a shell command to completion (timeout + output cap). */
+	exec: (request: ExecRequest) => Effect.Effect<ExecResult, ControlError>
+	readonly health: Effect.Effect<Health, ControlError>
+	/** Last `tail` lines of a file under /artifacts; empty when it does not exist. */
+	logs: (file: string, tail?: number) => Effect.Effect<string, ControlError>
+	navigate: (url: string, timeoutMs?: number) => Effect.Effect<NavigateResult, ControlError>
+	/** Failed requests and >= 400 responses since the last call. */
+	readonly networkEvents: Effect.Effect<readonly NetworkEvent[], ControlError>
+	pageSnapshot: (maxText?: number) => Effect.Effect<PageSnapshot, ControlError>
+	screenshot: (options?: ShotOptions) => Effect.Effect<Screenshot, ControlError>
+	/** Starts a detached command that lives until the computer stops. */
+	spawn: (request: SpawnRequest) => Effect.Effect<SpawnResult, ControlError>
+	/** Starts recording the screen to /artifacts/raw.mkv. */
+	readonly startRecording: Effect.Effect<RecordStartResult, ControlError>
+	/** Finalises raw.mkv and remuxes it to raw.mp4. */
+	readonly stopRecording: Effect.Effect<RecordingResult, ControlError>
+}
 
 export const makeControlClient = Effect.fnUntraced(function* (baseUrl: string, token: string) {
-	const client = (yield* HttpClient.HttpClient).pipe(
-		HttpClient.mapRequest((r) => r.pipe(HttpClientRequest.prependUrl(baseUrl), HttpClientRequest.bearerToken(token)))
-	)
-
-	const fail = (method: string, path: string) => (e: { readonly message: string }) =>
-		new ControlError({ message: e.message, method, path, remoteTag: null, status: null })
-
-	/** Sends a request; turns non-2xx responses into ControlError with the server's error tag. */
-	const send = (method: "GET" | "POST", path: string, body?: unknown, timeoutMs = 60_000) =>
-		Effect.gen(function* () {
-			let req = method === "GET" ? HttpClientRequest.get(path) : HttpClientRequest.post(path)
-			if (method === "POST") {
-				req = yield* HttpClientRequest.bodyJson(req, body ?? {}).pipe(Effect.mapError(fail(method, path)))
-			}
-			const res = yield* client
-				.execute(req)
-				.pipe(Effect.timeout(`${timeoutMs} millis`), Effect.mapError(fail(method, path)))
-			if (res.status >= 200 && res.status < 300) {
-				return res
-			}
-			const err = yield* HttpClientResponse.schemaBodyJson(ErrorBody)(res).pipe(Effect.option)
-			return yield* new ControlError({
-				message: Option.match(err, { onNone: () => `HTTP ${res.status}`, onSome: (b) => b.error }),
-				method,
-				path,
-				remoteTag: Option.match(err, { onNone: () => null, onSome: (b) => b.tag ?? null }),
-				status: res.status,
-			})
-		})
-
-	const json = <A, I>(
-		schema: Schema.Codec<A, I>,
-		method: "GET" | "POST",
-		path: string,
-		body?: unknown,
-		timeoutMs?: number
-	) =>
-		send(method, path, body, timeoutMs).pipe(
-			Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
-			Effect.mapError((e) => (e._tag === "ControlError" ? e : fail(method, path)(e)))
-		)
-
-	const shot = (path: string, body: unknown, timeoutMs?: number) =>
-		Effect.gen(function* () {
-			const res = yield* send("POST", path, body, timeoutMs)
-			const data = yield* res.arrayBuffer.pipe(Effect.mapError(fail("POST", path)))
-			const h = res.headers
-			const actionAt = h[ShotHeaders.actionAt]
-			return {
-				actionAt: actionAt === undefined ? undefined : Number(actionAt),
-				at: Number(h[ShotHeaders.at]),
-				cursor: { x: Number(h[ShotHeaders.cursorX]), y: Number(h[ShotHeaders.cursorY]) },
-				data: new Uint8Array(data),
-				height: Number(h[ShotHeaders.height]),
-				mime: h["content-type"] === "image/jpeg" ? "image/jpeg" : "image/png",
-				width: Number(h[ShotHeaders.width]),
-			} satisfies Screenshot
-		})
-
-	const calls: ControlCalls = {
-		act: (request: ActRequest) =>
-			shot("/act", request, request.action.type === "wait" ? request.action.ms + 30_000 : 60_000),
-		consoleMessages: json(Schema.Struct({ messages: Schema.Array(ConsoleMessage) }), "POST", "/browser/console").pipe(
-			Effect.map((r) => r.messages)
+	const client = yield* HttpApiClient.make(ControlApi, {
+		transformClient: HttpClient.mapRequest(
+			flow(HttpClientRequest.prependUrl(baseUrl), HttpClientRequest.bearerToken(token))
 		),
-		evaluate: (expression: string) =>
-			json(EvaluateResult, "POST", "/browser/evaluate", { expression }).pipe(Effect.map((r) => r.value)),
-		exec: (request: ExecRequest) => json(ExecResult, "POST", "/exec", request, (request.timeout_ms ?? 30_000) + 10_000),
-		health: json(Health, "GET", "/health", undefined, 3000),
-		logs: (file: string, tail = 200) =>
-			json(LogsResult, "GET", `/logs?${new URLSearchParams({ file, tail: String(tail) })}`).pipe(
-				Effect.map((r) => r.lines),
-				Effect.catchIf(
-					(e) => e.status === 404,
-					() => Effect.succeed("")
-				)
+	})
+
+	/** Bounds a call and folds every failure into ControlError. */
+	const call =
+		(endpoint: string, timeout: Duration.Input = "60 seconds") =>
+		<A, E>(effect: Effect.Effect<A, E>) =>
+			effect.pipe(
+				Effect.timeout(timeout),
+				Effect.mapError((e) => new ControlError({ endpoint, message: messageOf(e) }))
+			)
+
+	const calls: ControlClient = {
+		act: (request) =>
+			client.control
+				.act({ payload: request })
+				.pipe(call("act", request.action.type === "wait" ? `${request.action.ms + 30_000} millis` : undefined)),
+		consoleMessages: client.control.console().pipe(call("console")),
+		evaluate: (expression) =>
+			client.control.evaluate({ payload: { expression } }).pipe(
+				Effect.map((r) => r.value),
+				call("evaluate")
 			),
-		navigate: (url: string, timeoutMs = 30_000) =>
-			json(NavigateResult, "POST", "/browser/navigate", { timeout_ms: timeoutMs, url }, timeoutMs + 10_000),
-		networkEvents: json(Schema.Struct({ requests: Schema.Array(NetworkEvent) }), "POST", "/browser/network").pipe(
-			Effect.map((r) => r.requests)
-		),
-		pageSnapshot: (maxText?: number) =>
-			json(PageSnapshot, "POST", "/browser/snapshot", maxText === undefined ? {} : { max_text: maxText }),
-		screenshot: (options: ShotOptions = {}) => shot("/screenshot", options),
-		startRecording: (path?: string) =>
-			json(RecordStartResult, "POST", "/record/start", path === undefined ? {} : { path }),
-		stopRecording: json(RecordingResult, "POST", "/record/stop", {}, 120_000),
+		exec: (request) =>
+			client.control.exec({ payload: request }).pipe(call("exec", `${(request.timeout_ms ?? 30_000) + 10_000} millis`)),
+		health: client.status.health().pipe(call("health", "3 seconds")),
+		logs: (file, tail = 200) =>
+			client.control.logs({ query: { file, tail } }).pipe(
+				Effect.catchTag("ArtifactNotFoundError", () => Effect.succeed("")),
+				call("logs")
+			),
+		navigate: (url, timeoutMs = 30_000) =>
+			client.control
+				.navigate({ payload: { timeout_ms: timeoutMs, url } })
+				.pipe(call("navigate", `${timeoutMs + 10_000} millis`)),
+		networkEvents: client.control.network().pipe(call("network")),
+		pageSnapshot: (maxText) =>
+			client.control.snapshot({ payload: maxText === undefined ? {} : { max_text: maxText } }).pipe(call("snapshot")),
+		screenshot: (options = {}) => client.control.screenshot({ payload: options }).pipe(call("screenshot")),
+		spawn: (request) => client.control.spawn({ payload: request }).pipe(call("spawn")),
+		startRecording: client.control.startRecording().pipe(call("startRecording")),
+		stopRecording: client.control.stopRecording().pipe(call("stopRecording", "120 seconds")),
 	}
 	return calls
 })

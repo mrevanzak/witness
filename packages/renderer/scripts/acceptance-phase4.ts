@@ -5,11 +5,10 @@ import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { Step, Verdict } from "@witness/domain"
 import { Console, Effect, FileSystem, Path, Schema } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
-import { outputTimeOf, renderRun, sourceTimeAt, zoomAt } from "../src/index.ts"
+import { renderRun } from "../src/index.ts"
+import { isClick, outputTimeOf, sourceTimeAt, zoomAt } from "../src/timeline.ts"
 
 class AcceptanceFailed extends Schema.TaggedError<AcceptanceFailed>()("AcceptanceFailed", { message: Schema.String }) {}
-
-const CLICKS = new Set(["click", "double_click", "right_click", "click_element"])
 
 const program = Effect.gen(function* () {
 	const fs = yield* FileSystem.FileSystem
@@ -25,7 +24,7 @@ const program = Effect.gen(function* () {
 
 	const lines = (yield* fs.readFileString(path.join(dir, "steps.jsonl"))).split("\n").filter(Boolean)
 	const steps = yield* Effect.forEach(lines, (l) => Schema.decodeUnknownEffect(Schema.fromJsonString(Step))(l))
-	const clicks = steps.filter((s) => CLICKS.has(s.tool) && s.t !== undefined && s.x !== undefined && s.y !== undefined)
+	const clicks = steps.filter((s) => isClick(s.tool) && s.t !== undefined && s.x !== undefined && s.y !== undefined)
 	for (const c of clicks) {
 		const out = outputTimeOf(tl, c.t!)
 		if (out === null) {

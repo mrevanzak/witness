@@ -15,6 +15,9 @@ import { ReportManifest } from "./run.ts"
 /** Uploaded file names are flat: `video-after.mp4`, `after-01-hub-js.png`. */
 export const ReportFileName = Schema.String.pipe(Schema.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/)))
 
+/** Stored next to the media under each report; uploads may not use this name. */
+export const MANIFEST_FILE = "manifest.json"
+
 export class UploadUnauthorized extends Schema.TaggedError<UploadUnauthorized>()(
 	"UploadUnauthorized",
 	{ message: Schema.String },
@@ -51,18 +54,6 @@ export class UploadAuth extends HttpApiMiddleware.Service<UploadAuth, { provides
 	}
 ) {}
 
-export const ReportSummary = Schema.Struct({
-	bytes: Schema.Finite,
-	created_at: Schema.String,
-	id: ReportId,
-	overall: Schema.String,
-	pr: Schema.NullOr(Schema.String),
-	repo: Schema.NullOr(Schema.String),
-	status: Schema.Literals(["uploading", "ready"]),
-	title: Schema.String,
-})
-export type ReportSummary = typeof ReportSummary.Type
-
 export class ReportsGroup extends HttpApiGroup.make("reports")
 	.add(
 		HttpApiEndpoint.post("create", "/api/reports", {
@@ -80,15 +71,6 @@ export class ReportsGroup extends HttpApiGroup.make("reports")
 			error: [ReportNotFound, ReportStorageError],
 			params: { id: ReportId },
 			success: Schema.Struct({ id: ReportId, url: Schema.String }),
-		}),
-		HttpApiEndpoint.get("list", "/api/reports", {
-			error: ReportStorageError,
-			success: Schema.Array(ReportSummary),
-		}),
-		HttpApiEndpoint.delete("remove", "/api/reports/:id", {
-			error: [ReportNotFound, ReportStorageError],
-			params: { id: ReportId },
-			success: Schema.Struct({ deleted: Schema.Finite, id: ReportId }),
 		})
 	)
 	.middleware(UploadAuth) {}

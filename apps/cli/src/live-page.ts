@@ -1,5 +1,7 @@
 // The live view page (served by Live.ts). Self-contained: fonts from Google Fonts,
 // no other external code. Same tokens as the walkthrough video.
+import { PALETTE_CSS } from "@witness/domain"
+
 export const LIVE_PAGE = `<!doctype html>
 <html lang="en">
 <head>
@@ -11,9 +13,7 @@ export const LIVE_PAGE = `<!doctype html>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
 	:root {
-		--ink: #0e0f10; --surface: #17181b; --hairline: #2a2c30; --paper: #e7e5e0;
-		--muted: #8b8984; --faint: #55575c; --pass: #4cc38a; --fail: #f2555a; --blocked: #e2a336;
-		--sans: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+		${PALETTE_CSS}
 	}
 	* { box-sizing: border-box; }
 	html, body { margin: 0; height: 100%; background: var(--ink); color: var(--paper); font: 15px/1.45 var(--sans); }
@@ -135,7 +135,7 @@ export const LIVE_PAGE = `<!doctype html>
 				f.src = d.liveView; f.title = "The computer's desktop";
 				document.querySelector(".screen").prepend(f);
 				$("live").style.display = "inline-block";
-			} else $("screen-empty").textContent = "Live desktop is off for this run (start it with --live).";
+			}
 		}
 		if (e.event === "plan.done" && Array.isArray(d.criteria)) d.criteria.forEach(declare);
 		if (e.event === "criterion.declared") declare(d);

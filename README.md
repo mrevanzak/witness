@@ -45,7 +45,7 @@ pnpm witness report .witness/runs/<run-id>
 
 Runs are recorded under `.witness/runs/` at the root of the git repo you run `witness` from (`--runs-dir` overrides it). `.witness/` carries its own `.gitignore`, so runs stay out of `git status` without touching yours.
 
-Each run opens a live view in your browser: the desktop as it happens, next to the checklist and the step log. Pass `--no-live` to skip it; CI never opens one. The run exits with 0 for pass, 1 for fail, 2 for blocked and 3 for usage errors, so it slots into scripts and CI.
+Each run opens a live view in your browser: the desktop as it happens, next to the checklist and the step log. Pass `--no-live` to skip it; CI never opens one. The run exits with 0 for pass, 1 for fail, 2 for blocked, 3 for usage errors and 4 when something else stopped the command (Docker down, a failed upload), so it slots into scripts and CI.
 
 ## Before and after
 
@@ -146,7 +146,6 @@ A config passed with `--config` can also stage files from your machine into the 
 | `witness compare <before> <after> --out <dir>` | a before/after report folder |
 | `witness upload <run> [<after-run>]` | publish a hosted report (with the run's `before/`, or the two runs given), print its URL and write `hosted-section.md` for the PR |
 | `witness publish --pr <n> --report <file>` | put a report in your PR's description, or comment on someone else's PR |
-| `witness drive <run> <action>` | poke at a computer kept with `--keep` while you explore |
 | `witness cleanup` | remove computers and networks left behind by crashed runs |
 
 ## Publishing evidence

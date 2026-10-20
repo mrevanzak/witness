@@ -3,9 +3,19 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { NodeServices } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
-import { BlockedVerdict, Still, Usage, Verdict, VerdictCriterion, WalkthroughReport } from "@witness/domain"
+import {
+	BEFORE_DIR,
+	BlockedVerdict,
+	loadRunPair,
+	RunInfo,
+	Still,
+	Usage,
+	Verdict,
+	VerdictCriterion,
+	WalkthroughReport,
+} from "@witness/domain"
 import { Effect, Option, Schema } from "effect"
-import { BEFORE_DIR, beforeRun, writeRunReport } from "../src/index.ts"
+import { noReportOptions, writeReport } from "../src/report.ts"
 
 const write = <A, I>(file: string, schema: Schema.Codec<A, I>, value: A) => {
 	mkdirSync(join(file, ".."), { recursive: true })
@@ -38,7 +48,11 @@ const verdict = (status: "pass" | "fail") =>
 	})
 
 /** A finished session run: its verdict and the stills it took. */
+const info = (sha: string) =>
+	new RunInfo({ base: null, id: "r", prefix: "", ref: "HEAD", repo: "/repo", sha, startedAt: "", task: "Empty titles" })
+
 const sessionRun = (dir: string, status: "pass" | "fail", stills: readonly string[]) => {
+	write(join(dir, "run.json"), RunInfo, info(status === "pass" ? "aaaaaaa1" : "bbbbbbb2"))
 	write(join(dir, "verdict.json"), Verdict, verdict(status))
 	write(
 		join(dir, "walkthrough.json"),
@@ -60,6 +74,12 @@ const sessionRun = (dir: string, status: "pass" | "fail", stills: readonly strin
 const run = <A, E>(effect: Effect.Effect<A, E, NodeServices.NodeServices>) =>
 	effect.pipe(Effect.provide(NodeServices.layer))
 
+const reportFor = (dir: string) =>
+	loadRunPair(dir).pipe(
+		Effect.flatMap((pair) => writeReport(pair, dir, { ...noReportOptions, bundle: false })),
+		Effect.map((file) => readFileSync(file, "utf8"))
+	)
+
 describe("before/after runs", () => {
 	it.effect("pairs stills by name and keeps before stills that have no counterpart", () =>
 		run(
@@ -68,10 +88,13 @@ describe("before/after runs", () => {
 				sessionRun(dir, "pass", ["empty-title"])
 				sessionRun(join(dir, BEFORE_DIR), "fail", ["empty-title", "counter"])
 
-				const before = yield* beforeRun(dir)
-				assert.deepStrictEqual(before, Option.some({ blocked: Option.none(), dir: join(dir, BEFORE_DIR) }))
+				const pair = yield* loadRunPair(dir)
+				assert.deepStrictEqual(
+					Option.map(pair.before, (b) => b.dir),
+					Option.some(join(dir, BEFORE_DIR))
+				)
 
-				const report = readFileSync(yield* writeRunReport(dir), "utf8")
+				const report = yield* reportFor(dir)
 				const order = ["**Before:** empty-title (fail)", "**After:** empty-title (pass)", "**Before:** counter (fail)"]
 				const at = order.map((line) => report.indexOf(line))
 				assert.isTrue(
@@ -84,6 +107,9 @@ describe("before/after runs", () => {
 				)
 				assert.include(report, "| Criterion | Before | After |")
 				assert.include(report, "❌ fail: A blank todo was added. | ✅ pass: The error shows. |")
+				// Media are linked where they are: the before run's inside its folder.
+				assert.include(report, "](./before/stills/01-empty-title.png)")
+				assert.include(report, "Preview: before = bbbbbbb; after = aaaaaaa")
 			})
 		)
 	)
@@ -99,12 +125,12 @@ describe("before/after runs", () => {
 					new BlockedVerdict({ notes: "setup: pnpm install failed", overall: "blocked", reason: "app_failed_to_boot" })
 				)
 
-				const before = yield* beforeRun(dir)
-				assert.deepStrictEqual(
-					Option.flatMap(before, (b) => b.blocked),
-					Option.some("setup: pnpm install failed")
-				)
-				const report = readFileSync(yield* writeRunReport(dir), "utf8")
+				const pair = yield* loadRunPair(dir)
+				assert.isTrue(Option.isNone(pair.before))
+				assert.deepStrictEqual(pair.notes, [
+					"The base commit could not be checked, so there is no before state: setup: pnpm install failed",
+				])
+				const report = yield* reportFor(dir)
 				assert.notInclude(report, "**Before:**")
 				assert.include(report, "no before state: setup: pnpm install failed")
 			})
@@ -116,7 +142,9 @@ describe("before/after runs", () => {
 			Effect.gen(function* () {
 				const dir = mkdtempSync(join(tmpdir(), "witness-report-"))
 				sessionRun(dir, "pass", [])
-				assert.isTrue(Option.isNone(yield* beforeRun(dir)))
+				assert.isTrue(Option.isNone((yield* loadRunPair(dir)).before))
+				const report = yield* reportFor(dir)
+				assert.include(report, "| ✅ pass | C1 An empty title shows an error | – | The error shows. |")
 			})
 		)
 	)

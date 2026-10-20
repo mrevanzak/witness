@@ -1,32 +1,44 @@
 // `witness run --session`: a live run that the calling Claude Code session drives
-// itself. The run boots the app, starts recording, then serves a local command
+// itself. The run boots the app, starts recording, then takes commands on a local
 // endpoint; `witness act <action>` sends one recorded action at a time (click,
 // type, begin/end a criterion, take a still) and prints a screenshot path to look
-// at. `witness act finish` closes it and the run writes its verdict as usual.
+// at. `witness act finish` ends a side and the run writes its verdict as usual.
 //
 // `run --session` detaches the run into a background process and returns once
 // the session is ready (or the app failed to boot), so the caller needs no
-// background shell.
+// background shell. The process serves one endpoint for its whole life and says
+// which side is up through `GET /status`.
 //
-// With `states: before-after` the first session is the base commit (in
-// `<runDir>/before/`). Finishing it boots the change in a second session with the
-// same criteria declared, and `act finish` returns once that one is ready.
+// With `states: before-after` the first side is the base commit (in
+// `<runDir>/before/`). Finishing it boots the change with the same criteria
+// declared, and `act finish` returns once that side is ready.
 
 import { spawn } from "node:child_process"
 import { randomBytes } from "node:crypto"
 import { openSync } from "node:fs"
-import { createServer } from "node:http"
-import { NodeHttpServer } from "@effect/platform-node"
-import { type PageElement, SCREEN_W } from "@witness/computer"
-import { CriterionKind, CriterionStatus, EXIT_CODES, Plan, RunInfo } from "@witness/domain"
+import { EXIT_ERROR, exitCodeOf, RUN_FILES, requireRunFile, VerdictFile } from "@witness/domain"
 import {
-	BEFORE_DIR,
+	ActionFailed,
 	newRunId,
-	Walkthrough,
-	type WalkthroughProgram,
-	WalkthroughStepFailed,
+	Recorder,
+	type RecorderApi,
+	SESSION_SHOT_WIDTH,
+	type SessionProgram,
 } from "@witness/orchestrator"
-import { Clock, Console, Deferred, Effect, FileSystem, Layer, Option, Path, Ref, Schema, Semaphore } from "effect"
+import {
+	Clock,
+	Console,
+	Deferred,
+	Effect,
+	FileSystem,
+	Option,
+	Path,
+	Ref,
+	Schema,
+	Semaphore,
+	Stream,
+	SubscriptionRef,
+} from "effect"
 import {
 	HttpClient,
 	HttpClientRequest,
@@ -35,20 +47,35 @@ import {
 	HttpServerRequest,
 	HttpServerResponse,
 } from "effect/http"
-import { freePort } from "./live.ts"
+import { serveLoopback } from "./live.ts"
+import { ACTION_SPECS, ACTIONS, type ActionName, bad } from "./session-actions.ts"
+import { printVerdict } from "./verdict-text.ts"
 
-/** Screenshots the driver sees are this wide; coordinates it sends and reads are in these pixels. */
-const SHOT_W = 1280
-const SCALE = SCREEN_W / SHOT_W
-const toScreen = (v: number) => Math.round(v * SCALE)
-const toShot = (v: number) => Math.round(v / SCALE)
-
-/** Written to <runDir>/driver.json while the session is open; removed when it closes. */
+/** Written to <runDir>/driver.json while the session process runs; removed when it ends. */
 const DriverInfo = Schema.Struct({ token: Schema.String, url: Schema.String })
 const DriverInfoJson = Schema.fromJsonString(DriverInfo)
 
+/** Which side of the run takes commands. `seq` grows with every change. */
+const SessionStatus = Schema.Union([
+	Schema.TaggedStruct("Booting", { seq: Schema.Int }),
+	Schema.TaggedStruct("Ready", {
+		carried: Schema.Array(Schema.String),
+		/** That side's run folder. */
+		runDir: Schema.String,
+		seq: Schema.Int,
+		sha: Schema.String,
+		side: Schema.Literals(["before", "after", "single"]),
+	}),
+	Schema.TaggedStruct("Finished", { seq: Schema.Int }),
+])
+type SessionStatus = typeof SessionStatus.Type
+type Ready = Extract<SessionStatus, { _tag: "Ready" }>
+
+/** No session to talk to, or a command was malformed. */
+export class SessionError extends Schema.TaggedError<SessionError>()("SessionError", { message: Schema.String }) {}
+
 const ActRequest = Schema.Struct({
-	action: Schema.String,
+	action: Schema.Literals(ACTIONS),
 	args: Schema.Array(Schema.String),
 	label: Schema.optionalKey(Schema.String),
 })
@@ -60,261 +87,156 @@ const ActResponse = Schema.Struct({
 })
 type ActResponse = typeof ActResponse.Type
 
-/** No session to talk to, or a command was malformed. */
-export class SessionError extends Schema.TaggedError<SessionError>()("SessionError", { message: Schema.String }) {}
+/** The side taking commands right now. */
+type Side = {
+	readonly recorder: RecorderApi
+	readonly done: Deferred.Deferred<void>
+	readonly lastAt: Ref.Ref<number>
+}
 
-export const ACTIONS = [
-	"criterion",
-	"begin",
-	"end",
-	"shot",
-	"snapshot",
-	"click",
-	"click-ref",
-	"click-text",
-	"type",
-	"type-secret",
-	"key",
-	"scroll",
-	"navigate",
-	"wait",
-	"eval",
-	"console",
-	"logs",
-	"still",
-	"note",
-	"preview",
-	"intro",
-	"finish",
-] as const
+/**
+ * The session process's command endpoint, for its whole life (both sides of a
+ * before/after). Returns the program each side runs, and `finished` for when the
+ * run is over.
+ */
+export const sessionHost = Effect.fnUntraced(function* (runDir: string, idleMs: number) {
+	const fs = yield* FileSystem.FileSystem
+	const path = yield* Path.Path
+	const status = yield* SubscriptionRef.make<SessionStatus>({ _tag: "Booting", seq: 0 })
+	const current = yield* Ref.make(Option.none<Side>())
+	const lock = yield* Semaphore.make(1)
+	const shotNo = yield* Ref.make(0)
+	const setStatus = (next: (seq: number) => SessionStatus) => SubscriptionRef.update(status, (s) => next(s.seq + 1))
 
-const fail = (message: string) => new WalkthroughStepFailed({ message })
-
-/** The walkthrough program behind `run --session`: serves commands until `finish` or `idleMs` without one. */
-export const sessionProgram = Effect.fnUntraced(function* (idleMs: number) {
-	const context = yield* Effect.context<FileSystem.FileSystem | Path.Path>()
-	const program = Effect.gen(function* () {
-		const w = yield* Walkthrough
-		const fs = yield* FileSystem.FileSystem
-		const path = yield* Path.Path
-		const lock = yield* Semaphore.make(1)
-		const done = yield* Deferred.make<void>()
-		const lastAt = yield* Ref.make(yield* Clock.currentTimeMillis)
-		const elements = yield* Ref.make(new Map<string, PageElement>())
-		const shotNo = yield* Ref.make(0)
-		const shotDir = path.join(w.runDir, "session")
-		const io = (e: { readonly message: string }) => fail(e.message)
-		yield* fs.makeDirectory(shotDir, { recursive: true }).pipe(Effect.mapError(io))
-
-		const look = Effect.gen(function* () {
-			const s = yield* w.screenshot({ format: "jpeg", quality: 80, width: SHOT_W })
+	/** Saves a screen the driver looks at, and returns its path. */
+	const look = (data: Uint8Array) =>
+		Effect.gen(function* () {
 			const n = yield* Ref.updateAndGet(shotNo, (x) => x + 1)
-			const file = path.join(shotDir, `${String(n).padStart(3, "0")}.jpg`)
-			yield* fs.writeFile(file, s.data).pipe(Effect.mapError(io))
+			const dir = path.join(runDir, "session")
+			yield* fs.makeDirectory(dir, { recursive: true })
+			const file = path.join(dir, `${String(n).padStart(3, "0")}.jpg`)
+			yield* fs.writeFile(file, data)
 			return file
 		})
 
-		const perform = Effect.fnUntraced(function* (req: typeof ActRequest.Type) {
-			const { action, args } = req
-			const rest = args.join(" ")
-			const need = (i: number, name: string): Effect.Effect<string, WalkthroughStepFailed> =>
-				args[i] === undefined ? Effect.fail(fail(`${action}: missing <${name}>`)) : Effect.succeed(args[i]!)
-			const int = (i: number, name: string): Effect.Effect<number, WalkthroughStepFailed> =>
-				need(i, name).pipe(
-					Effect.flatMap((v) =>
-						Number.isFinite(Number(v))
-							? Effect.succeed(Math.round(Number(v)))
-							: Effect.fail(fail(`${name}: not a number`))
-					)
-				)
-			const label = (fallback: string) => req.label ?? fallback
-			const shown = (text?: string) => ({ shot: true, text })
+	const act = (req: typeof ActRequest.Type) =>
+		Effect.gen(function* () {
+			const side = yield* Ref.get(current)
+			if (Option.isNone(side)) {
+				return yield* bad("no side is ready yet (the app is booting); try again in a moment")
+			}
+			const { done, lastAt, recorder } = side.value
+			yield* Ref.set(lastAt, yield* Clock.currentTimeMillis)
+			if (req.action === "finish") {
+				yield* Deferred.succeed(done, undefined)
+				return { ok: true, text: "finishing" } satisfies ActResponse
+			}
+			const calls = yield* ACTION_SPECS[req.action].parse(req.args, Option.fromUndefinedOr(req.label))
+			const texts: string[] = []
+			let shot: string | undefined
+			for (const call of calls) {
+				const r = yield* recorder.perform(call)
+				texts.push(r.text)
+				if (Option.isSome(r.screen)) {
+					shot = yield* look(r.screen.value.data).pipe(Effect.mapError((e) => new ActionFailed({ message: e.message })))
+				}
+			}
+			yield* Ref.set(lastAt, yield* Clock.currentTimeMillis)
+			return { ok: true, text: texts.join("\n"), ...(shot ? { shot } : {}) } satisfies ActResponse
+		}).pipe(
+			Effect.catch((e) => Effect.succeed({ error: e.message, ok: false } satisfies ActResponse)),
+			Semaphore.withPermit(lock)
+		)
 
-			switch (action) {
-				case "criterion": {
-					const id = yield* need(0, "id")
-					const kind = yield* need(1, "feature|regression")
-					if (!Schema.is(CriterionKind)(kind)) {
-						return yield* fail("kind must be feature or regression")
+	const token = randomBytes(24).toString("hex")
+	const authorized = HttpServerRequest.HttpServerRequest.pipe(
+		Effect.map((r) => r.headers.authorization === `Bearer ${token}`)
+	)
+	const unauthorized = HttpServerResponse.json({ error: "unauthorized", ok: false }, { status: 401 })
+	const origin = yield* serveLoopback(
+		HttpRouter.addAll([
+			HttpRouter.route(
+				"POST",
+				"/act",
+				Effect.gen(function* () {
+					if (!(yield* authorized)) {
+						return yield* unauthorized
 					}
-					const description = args.slice(2).join(" ")
-					if (!description) {
-						return yield* fail("criterion: missing <description>")
-					}
-					yield* w.criterion(id, kind, description)
-					return { text: `declared ${id} (${kind})` }
-				}
-				case "begin":
-					yield* w.begin(yield* need(0, "id"))
-					return { text: "begun" }
-				case "end": {
-					const id = yield* need(0, "id")
-					const status = yield* need(1, "pass|fail|blocked")
-					if (!Schema.is(CriterionStatus)(status)) {
-						return yield* fail("status must be pass, fail or blocked")
-					}
-					const notes = args.slice(2).join(" ")
-					if (!notes) {
-						return yield* fail("end: missing <notes> (what you did and saw)")
-					}
-					yield* w.end(id, status, notes)
-					return { text: `${id} ${status}` }
-				}
-				case "shot":
-					return shown()
-				case "snapshot": {
-					const snap = yield* w.snapshot(8000)
-					yield* Ref.set(elements, new Map(snap.elements.map((e) => [e.ref, e])))
-					const lines = snap.elements.map((e) => {
-						const flags = [e.disabled ? "disabled" : "", e.checked ? "checked" : ""].filter(Boolean).join(",")
-						return `${e.ref} ${e.role ?? e.tag}${e.type ? `[${e.type}]` : ""} ${JSON.stringify(e.name)}${e.value ? ` value=${JSON.stringify(e.value)}` : ""}${flags ? ` (${flags})` : ""} @(${toShot(e.x)},${toShot(e.y)})`
+					const body = yield* HttpServerRequest.schemaBodyJson(ActRequest).pipe(Effect.option)
+					return yield* Option.match(body, {
+						onNone: () => HttpServerResponse.json({ error: "bad request", ok: false }, { status: 400 }),
+						onSome: (b) => act(b).pipe(Effect.flatMap((r) => HttpServerResponse.json(r))),
 					})
-					return {
-						text: `URL: ${snap.url}\nTitle: ${snap.title}\n--- text\n${snap.text}\n--- elements\n${lines.join("\n")}`,
+				}).pipe(Effect.orDie)
+			),
+			// Long poll: answers once the status is newer than `since`, or after 20 s.
+			HttpRouter.route(
+				"GET",
+				"/status",
+				Effect.gen(function* () {
+					if (!(yield* authorized)) {
+						return yield* unauthorized
 					}
-				}
-				case "click": {
-					const x = yield* int(0, "x")
-					const y = yield* int(1, "y")
-					yield* w.click(toScreen(x), toScreen(y), label(`Click at (${x}, ${y})`))
-					return shown()
-				}
-				case "click-ref": {
-					const ref = yield* need(0, "ref")
-					const el = (yield* Ref.get(elements)).get(ref)
-					if (!el) {
-						return yield* fail(`unknown ref ${ref}; run snapshot first (refs change after every snapshot)`)
-					}
-					yield* w.click(el.x, el.y, label(`Click "${el.name.slice(0, 40)}"`))
-					return shown(`clicked ${ref} ${JSON.stringify(el.name)}`)
-				}
-				case "click-text": {
-					if (!rest) {
-						return yield* fail("click-text: missing <text>")
-					}
-					const el = yield* w.clickText(rest, label(`Click "${rest.slice(0, 40)}"`), { timeoutMs: 5000 })
-					return shown(`clicked ${el.ref} ${JSON.stringify(el.name)}`)
-				}
-				case "type":
-					yield* w.type(rest, label(`Type "${rest.slice(0, 30)}"`))
-					return shown()
-				case "type-secret":
-					yield* w.typeSecret(label("Type the password"))
-					return shown()
-				case "key": {
-					const combo = yield* need(0, "combo")
-					yield* w.key(combo, label(`Press ${combo}`))
-					return shown()
-				}
-				case "scroll": {
-					const dy = yield* int(0, "dy")
-					const at = args.length >= 3 ? { x: toScreen(yield* int(1, "x")), y: toScreen(yield* int(2, "y")) } : undefined
-					yield* w.scroll(dy, label(dy > 0 ? "Scroll down" : "Scroll up"), at)
-					return shown()
-				}
-				case "navigate": {
-					const url = yield* need(0, "url")
-					yield* w.navigate(new URL(url, w.config.url).toString(), label(`Open ${new URL(url, w.config.url).pathname}`))
-					return shown()
-				}
-				case "wait": {
-					const ms = Math.max(100, Math.min(10_000, yield* int(0, "ms")))
-					yield* w.wait(ms, req.label)
-					return shown()
-				}
-				case "eval":
-					return { text: String(JSON.stringify(yield* w.evaluate(rest), null, 1)) }
-				case "console": {
-					const logs = yield* w.browserLogs
-					return { text: JSON.stringify(logs, null, 1) }
-				}
-				case "logs":
-					return { text: yield* w.appLogs(args[1] ?? "app.log", Number(args[0] ?? 100)) }
-				case "still": {
-					const name = yield* need(0, "name")
-					const caption = args.slice(1).join(" ")
-					if (!caption) {
-						return yield* fail("still: missing <caption> (one sentence saying what it proves)")
-					}
-					return { text: yield* w.still(name.replace(/[^\w-]+/g, "-"), caption) }
-				}
-				case "note":
-					yield* w.note(rest)
-					return { text: "noted" }
-				case "preview":
-					yield* w.preview(rest)
-					return { text: "set" }
-				case "intro":
-					yield* w.intro(rest)
-					return { text: "set" }
-				case "finish":
-					yield* Deferred.succeed(done, undefined)
-					return { text: "finishing" }
-				default:
-					return yield* fail(`unknown action ${action}; one of ${ACTIONS.join(", ")}`)
-			}
-		})
+					const query = yield* HttpServerRequest.schemaSearchParams(
+						Schema.Struct({ since: Schema.optionalKey(Schema.NumberFromString) })
+					)
+					const since = query.since ?? -1
+					const next = yield* SubscriptionRef.changes(status).pipe(
+						Stream.filter((s) => s.seq > since),
+						Stream.runHead,
+						Effect.timeout("20 seconds"),
+						Effect.catchTag("TimeoutError", () => Effect.succeed(Option.none<SessionStatus>())),
+						Effect.flatMap(Option.match({ onNone: () => SubscriptionRef.get(status), onSome: Effect.succeed }))
+					)
+					return yield* HttpServerResponse.json(Schema.encodeSync(SessionStatus)(next))
+				}).pipe(Effect.orDie)
+			),
+		])
+	)
+	const driverFile = path.join(runDir, RUN_FILES.driver)
+	yield* Effect.acquireRelease(
+		fs.writeFileString(driverFile, Schema.encodeSync(DriverInfoJson)({ token, url: origin })),
+		() => fs.remove(driverFile).pipe(Effect.ignore)
+	)
 
-		const handle = (req: typeof ActRequest.Type) =>
-			Effect.gen(function* () {
-				yield* Ref.set(lastAt, yield* Clock.currentTimeMillis)
-				const r: { readonly text?: string | undefined; readonly shot?: boolean } = yield* perform(req)
-				const shot = r.shot ? yield* look : undefined
-				yield* Ref.set(lastAt, yield* Clock.currentTimeMillis)
-				return { ok: true, ...(shot ? { shot } : {}), ...(r.text ? { text: r.text } : {}) } satisfies ActResponse
-			}).pipe(
-				Effect.catch((e) => Effect.succeed({ error: e.message, ok: false } satisfies ActResponse)),
-				Semaphore.withPermit(lock)
+	const program: SessionProgram = (side) =>
+		Effect.gen(function* () {
+			const recorder = yield* Recorder
+			const done = yield* Deferred.make<void>()
+			const lastAt = yield* Ref.make(yield* Clock.currentTimeMillis)
+			yield* Ref.set(current, Option.some({ done, lastAt, recorder }))
+			yield* setStatus((seq) => ({
+				_tag: "Ready",
+				carried: side.carried.map((c) => c.id),
+				runDir: recorder.runDir,
+				seq,
+				sha: side.sha,
+				side: Option.getOrElse(side.state, () => "single" as const),
+			}))
+			yield* Console.log(`session ready: ${recorder.runDir}`)
+			const idle = Effect.gen(function* () {
+				for (;;) {
+					yield* Effect.sleep("5 seconds")
+					if ((yield* Clock.currentTimeMillis) - (yield* Ref.get(lastAt)) > idleMs) {
+						return yield* bad(`no command for ${Math.round(idleMs / 1000)} s; the session closed itself`)
+					}
+				}
+			})
+			yield* Effect.raceFirst(Deferred.await(done), idle)
+		}).pipe(
+			Effect.ensuring(
+				Ref.set(current, Option.none()).pipe(Effect.andThen(setStatus((seq) => ({ _tag: "Booting", seq }))))
 			)
-
-		const token = randomBytes(24).toString("hex")
-		const routes = HttpRouter.add(
-			"POST",
-			"/act",
-			Effect.gen(function* () {
-				const request = yield* HttpServerRequest.HttpServerRequest
-				if (request.headers.authorization !== `Bearer ${token}`) {
-					return yield* HttpServerResponse.json({ error: "unauthorized", ok: false }, { status: 401 })
-				}
-				const body = yield* HttpServerRequest.schemaBodyJson(ActRequest).pipe(Effect.option)
-				if (Option.isNone(body)) {
-					return yield* HttpServerResponse.json({ error: "bad request", ok: false }, { status: 400 })
-				}
-				return yield* HttpServerResponse.json(yield* handle(body.value))
-			}).pipe(Effect.orDie)
 		)
-		const port = yield* freePort
-		yield* Layer.launch(
-			HttpRouter.serve(routes, { disableLogger: true }).pipe(
-				Layer.provide(NodeHttpServer.layer(createServer, { host: "127.0.0.1", port }))
-			)
-		).pipe(Effect.forkScoped)
 
-		const driverFile = path.join(w.runDir, "driver.json")
-		yield* Effect.acquireRelease(
-			fs
-				.writeFileString(driverFile, Schema.encodeSync(DriverInfoJson)({ token, url: `http://127.0.0.1:${port}` }))
-				.pipe(Effect.mapError(io)),
-			() => fs.remove(driverFile).pipe(Effect.ignore)
-		)
-		yield* Console.log(`session ready: ${w.runDir}`)
-
-		const idle = Effect.gen(function* () {
-			for (;;) {
-				yield* Effect.sleep("5 seconds")
-				if ((yield* Clock.currentTimeMillis) - (yield* Ref.get(lastAt)) > idleMs) {
-					return yield* fail(`no command for ${Math.round(idleMs / 1000)} s; the session closed itself`)
-				}
-			}
-		})
-		yield* Effect.raceFirst(Deferred.await(done), idle)
-		// Let the `finish` reply go out before the server closes.
-		yield* Effect.sleep("300 millis")
-	}).pipe(Effect.scoped, Effect.provideContext(context))
-	return program as WalkthroughProgram
+	return {
+		/** Tells waiting drivers the run is over, and gives them a moment to hear it. */
+		finished: setStatus((seq) => ({ _tag: "Finished", seq })).pipe(Effect.andThen(Effect.sleep("1 second"))),
+		program,
+	}
 })
 
-/** Finds the run to talk to: `run`, or the newest run under `runsDir` with an open session. */
+/** The open session's run dir: `run`, or the newest under `runsDir` with a driver.json. */
 const findSession = Effect.fnUntraced(function* (run: Option.Option<string>, runsDir: string) {
 	const fs = yield* FileSystem.FileSystem
 	const path = yield* Path.Path
@@ -324,81 +246,58 @@ const findSession = Effect.fnUntraced(function* (run: Option.Option<string>, run
 	const root = path.resolve(runsDir)
 	const names = yield* fs.readDirectory(root).pipe(Effect.orElseSucceed(() => [] as string[]))
 	for (const name of [...names].sort().reverse()) {
-		for (const dir of [path.join(root, name, BEFORE_DIR), path.join(root, name)]) {
-			if (yield* fs.exists(path.join(dir, "driver.json")).pipe(Effect.orElseSucceed(() => false))) {
-				return dir
-			}
+		if (yield* fs.exists(path.join(root, name, RUN_FILES.driver)).pipe(Effect.orElseSucceed(() => false))) {
+			return path.join(root, name)
 		}
 	}
 	return yield* new SessionError({ message: `no open session under ${root}; start one with \`witness run --session\`` })
 })
 
-const printVerdict = Effect.fnUntraced(function* (runDir: string) {
+/** A client for the session process whose driver.json is in `runDir`. */
+const connect = Effect.fnUntraced(function* (runDir: string) {
 	const fs = yield* FileSystem.FileSystem
 	const path = yield* Path.Path
-	const raw = yield* fs.readFileString(path.join(runDir, "verdict.json"))
-	const v = JSON.parse(raw) as {
-		overall: "pass" | "fail" | "blocked"
-		notes?: string
-		criteria?: { id: string; status: string; description: string }[]
+	const info = yield* fs.readFileString(path.join(runDir, RUN_FILES.driver)).pipe(
+		Effect.flatMap(Schema.decodeUnknownEffect(DriverInfoJson)),
+		Effect.mapError(() => new SessionError({ message: `no open session in ${runDir}` }))
+	)
+	const client = (yield* HttpClient.HttpClient).pipe(
+		HttpClient.mapRequest((r) =>
+			r.pipe(HttpClientRequest.prependUrl(info.url), HttpClientRequest.bearerToken(info.token))
+		)
+	)
+	const gone = (e: { readonly message: string }) =>
+		new SessionError({ message: `the session in ${runDir} did not answer: ${e.message}` })
+	return {
+		act: (body: typeof ActRequest.Type) =>
+			client
+				.execute(HttpClientRequest.post("/act").pipe(HttpClientRequest.bodyJsonUnsafe(body)))
+				.pipe(
+					Effect.flatMap(HttpClientResponse.schemaBodyJson(ActResponse)),
+					Effect.timeout("150 seconds"),
+					Effect.mapError(gone)
+				),
+		/** The status once it is newer than `since`; `Finished` once the process is gone. */
+		status: (since: number) =>
+			client.get(`/status?since=${since}`).pipe(
+				Effect.flatMap(HttpClientResponse.schemaBodyJson(SessionStatus)),
+				Effect.timeout("30 seconds"),
+				Effect.catch(() =>
+					fs.exists(path.join(runDir, RUN_FILES.driver)).pipe(
+						Effect.orElseSucceed(() => false),
+						Effect.flatMap((open) =>
+							open
+								? Effect.fail(new SessionError({ message: `the session in ${runDir} stopped answering` }))
+								: Effect.succeed<SessionStatus>({ _tag: "Finished", seq: since + 1 })
+						)
+					)
+				)
+			),
 	}
-	yield* Console.log(`\n${v.overall.toUpperCase()}`)
-	for (const c of v.criteria ?? []) {
-		yield* Console.log(`  ${c.id} ${c.status.padEnd(7)} ${c.description}`)
-	}
-	if (!v.criteria && v.notes) {
-		yield* Console.log(`  ${v.notes}`)
-	}
-	yield* Console.log(`run dir: ${runDir}`)
-	return EXIT_CODES[v.overall]
 })
 
-/** Waits up to `timeoutMs` for one of `files` to exist and returns it. */
-const waitFor = (files: readonly string[], timeoutMs: number) =>
-	Effect.gen(function* () {
-		const fs = yield* FileSystem.FileSystem
-		const deadline = (yield* Clock.currentTimeMillis) + timeoutMs
-		while ((yield* Clock.currentTimeMillis) < deadline) {
-			for (const file of files) {
-				if (yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false))) {
-					return Option.some(file)
-				}
-			}
-			yield* Effect.sleep("500 millis")
-		}
-		return Option.none<string>()
-	})
-
-/** The before/after side a session's run dir is on, its commit, and (after) the criteria carried over. */
-const sideOf = Effect.fnUntraced(function* (dir: string) {
-	const fs = yield* FileSystem.FileSystem
-	const path = yield* Path.Path
-	const read = <A, I>(file: string, schema: Schema.Codec<A, I>) =>
-		fs
-			.readFileString(file)
-			.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(schema))), Effect.option)
-	const sha = Option.match(yield* read(path.join(dir, "run.json"), RunInfo), {
-		onNone: () => "",
-		onSome: (i) => i.sha.slice(0, 7),
-	})
-	const none: readonly string[] = []
-	if (path.basename(dir) === BEFORE_DIR) {
-		return { carried: none, sha, side: "before" as const }
-	}
-	if (!(yield* fs.exists(path.join(dir, BEFORE_DIR)))) {
-		return { carried: none, sha, side: "single" as const }
-	}
-	const plan = yield* read(path.join(dir, BEFORE_DIR, "plan.json"), Plan)
-	const carried = Option.match(plan, { onNone: () => [], onSome: (p) => p.criteria.map((c) => c.id) })
-	return { carried, sha, side: "after" as const }
-})
-
-/** What `run --session` and `act finish` print once a session can take commands. */
-const readyText = (s: {
-	readonly side: "before" | "after" | "single"
-	readonly sha: string
-	readonly carried: readonly string[]
-}) =>
+/** What `run --session` and `act finish` print once a side can take commands. */
+const readyText = (s: Ready) =>
 	[
 		"",
 		...(s.side === "before"
@@ -413,45 +312,69 @@ const readyText = (s: {
 				]
 			: []),
 		"SESSION READY. Drive it with `witness act <action> [args] [--label <caption>]`:",
-		"  criterion <id> feature|regression <description>   begin <id>   end <id> pass|fail|blocked <notes>",
-		"  shot | snapshot | click <x> <y> | click-ref <ref> | click-text <text> | type <text> | type-secret",
-		"  key <combo> | scroll <dy> [x y] | navigate <url> | wait <ms> | eval <js> | console | logs [tail]",
-		"  still <name> <caption> | note <line> | preview <line> | intro <line> | finish",
-		`Coordinates are in ${SHOT_W}x${(SHOT_W * 9) / 16} screenshot pixels.`,
+		...Object.values(ACTION_SPECS).map((a) => `  ${a.usage}`),
+		`Coordinates are in ${SESSION_SHOT_WIDTH}x${(SESSION_SHOT_WIDTH * 9) / 16} screenshot pixels.`,
 	].join("\n")
+
+/** Prints the verdict in `dir` and returns its exit code. */
+const verdictIn = (dir: string) =>
+	requireRunFile(dir, RUN_FILES.verdict, VerdictFile).pipe(
+		Effect.tap((v) => printVerdict("", v)),
+		Effect.tap(() => Console.log(`run dir: ${dir}`)),
+		Effect.map(exitCodeOf)
+	)
+
+/**
+ * Waits past `since` for the next side or the end of the run. Prints the verdict of
+ * the side that just ended (`ended`), and returns the exit code to leave with.
+ */
+const followSession = Effect.fnUntraced(function* (
+	runDir: string,
+	client: Effect.Success<ReturnType<typeof connect>>,
+	since: number,
+	ended: Option.Option<Ready>
+) {
+	let seq = since
+	for (;;) {
+		const s = yield* client.status(seq)
+		seq = s.seq
+		if (s._tag === "Booting") {
+			continue
+		}
+		if (Option.isSome(ended)) {
+			yield* verdictIn(ended.value.runDir)
+		}
+		if (s._tag === "Ready") {
+			yield* Console.log(readyText(s))
+			return 0
+		}
+		// The change's verdict is the one that counts; print it unless it was just printed.
+		if (Option.exists(ended, (e) => e.side !== "before")) {
+			return exitCodeOf(yield* requireRunFile(runDir, RUN_FILES.verdict, VerdictFile))
+		}
+		return yield* verdictIn(runDir)
+	}
+})
 
 /** `witness act`: sends one command to an open session. Returns the exit code. */
 export const act = Effect.fn("act")(function* (opts: {
-	readonly action: string
+	readonly action: ActionName
 	readonly args: readonly string[]
 	readonly label: Option.Option<string>
 	readonly run: Option.Option<string>
 	readonly runsDir: string
 }) {
-	const fs = yield* FileSystem.FileSystem
-	const path = yield* Path.Path
 	const runDir = yield* findSession(opts.run, opts.runsDir)
-	const info = yield* fs.readFileString(path.join(runDir, "driver.json")).pipe(
-		Effect.flatMap(Schema.decodeUnknownEffect(DriverInfoJson)),
-		Effect.mapError(() => new SessionError({ message: `no open session in ${runDir}` }))
-	)
-	const body = {
+	const client = yield* connect(runDir)
+	const before = opts.action === "finish" ? yield* client.status(-1) : undefined
+	const res = yield* client.act({
 		action: opts.action,
 		args: opts.args,
-		...(Option.isSome(opts.label) ? { label: opts.label.value } : {}),
-	}
-	const req = yield* HttpClientRequest.post(`${info.url}/act`).pipe(
-		HttpClientRequest.bearerToken(info.token),
-		HttpClientRequest.bodyJson(body)
-	)
-	const res = yield* HttpClient.execute(req).pipe(
-		Effect.flatMap(HttpClientResponse.schemaBodyJson(ActResponse)),
-		Effect.timeout("150 seconds"),
-		Effect.mapError((e) => new SessionError({ message: `session in ${runDir} did not answer: ${e.message}` }))
-	)
+		...Option.match(opts.label, { onNone: () => ({}), onSome: (label) => ({ label }) }),
+	})
 	if (!res.ok) {
 		yield* Console.error(`error: ${res.error ?? "unknown"}`)
-		return 1
+		return EXIT_ERROR
 	}
 	if (res.text) {
 		yield* Console.log(res.text)
@@ -459,28 +382,14 @@ export const act = Effect.fn("act")(function* (opts: {
 	if (res.shot) {
 		yield* Console.log(`screenshot: ${res.shot}`)
 	}
-	if (opts.action !== "finish") {
+	if (!before) {
 		return 0
 	}
-	if (Option.isNone(yield* waitFor([path.join(runDir, "verdict.json")], 120_000))) {
-		return yield* new SessionError({ message: `no verdict.json in ${runDir} after 2 minutes; see session.log` })
+	const ended = before._tag === "Ready" ? Option.some(before) : Option.none<Ready>()
+	if (Option.exists(ended, (e) => e.side === "before")) {
+		yield* Console.log(`\nrecording the base commit, then booting the change (log: ${runDir}/session.log)`)
 	}
-	const code = yield* printVerdict(runDir)
-	if (path.basename(runDir) !== BEFORE_DIR) {
-		return code
-	}
-	// The base commit is recorded (its verdict is evidence, not the result); the change boots next.
-	const afterDir = path.dirname(runDir)
-	yield* Console.log(`\nbooting the change (log: ${path.join(afterDir, "session.log")})`)
-	const next = yield* waitFor([path.join(afterDir, "driver.json"), path.join(afterDir, "verdict.json")], 30 * 60_000)
-	if (Option.isNone(next)) {
-		return yield* new SessionError({ message: `the change did not boot in 30 minutes; see ${afterDir}/session.log` })
-	}
-	if (path.basename(next.value) === "verdict.json") {
-		return yield* printVerdict(afterDir)
-	}
-	yield* Console.log(readyText(yield* sideOf(afterDir)))
-	return 0
+	return yield* followSession(runDir, client, before.seq, ended)
 })
 
 /** Env var that marks the detached process that actually runs the session. */
@@ -497,7 +406,7 @@ export const launchSession = Effect.fn("launchSession")(function* (runsDir: stri
 	const dir = path.join(runsDir, id)
 	yield* fs.makeDirectory(dir, { recursive: true })
 	const logFile = path.join(dir, "session.log")
-	const exited: { code?: number | null } = {}
+	const exited = yield* Deferred.make<number | null>()
 	yield* Effect.sync(() => {
 		const out = openSync(logFile, "a")
 		const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], {
@@ -505,40 +414,33 @@ export const launchSession = Effect.fn("launchSession")(function* (runsDir: stri
 			env: { ...process.env, [DAEMON_ENV]: id },
 			stdio: ["ignore", out, out],
 		})
-		child.on("exit", (code) => {
-			exited.code = code
-		})
+		child.on("exit", (code) => Deferred.doneUnsafe(exited, Effect.succeed(code)))
 		child.unref()
 	})
 	yield* Console.log(`run dir: ${dir}\nbooting (log: ${logFile})`)
 
-	let printed = 0
+	// Echo the log until the process opens its endpoint (or dies first).
+	const printed = yield* Ref.make(0)
 	const follow = Effect.gen(function* () {
-		const text = yield* fs.readFileString(logFile).pipe(Effect.orElseSucceed(() => ""))
-		if (text.length > printed) {
-			yield* Console.log(text.slice(printed).trimEnd())
-			printed = text.length
+		const log = yield* fs.readFileString(logFile).pipe(Effect.orElseSucceed(() => ""))
+		const from = yield* Ref.getAndSet(printed, log.length)
+		if (log.length > from) {
+			yield* Console.log(log.slice(from).trimEnd())
 		}
 	})
-	for (;;) {
+	while (!(yield* fs.exists(path.join(dir, RUN_FILES.driver)))) {
 		yield* follow
-		// The base commit's session comes first when the run records before and after.
-		for (const d of [path.join(dir, BEFORE_DIR), dir]) {
-			if (yield* fs.exists(path.join(d, "driver.json"))) {
-				yield* Console.log(readyText(yield* sideOf(d)))
-				return 0
-			}
-		}
-		if (yield* fs.exists(path.join(dir, "verdict.json"))) {
-			yield* Effect.sleep("300 millis")
-			yield* follow
-			return yield* printVerdict(dir)
-		}
-		if ("code" in exited) {
-			yield* follow
-			yield* Console.error(`the session process exited (${exited.code}) before it was ready; see ${logFile}`)
-			return 3
+		if (yield* Deferred.isDone(exited)) {
+			yield* Console.error(
+				`the session process exited (${yield* Deferred.await(exited)}) before it was ready; see ${logFile}`
+			)
+			return EXIT_ERROR
 		}
 		yield* Effect.sleep("500 millis")
 	}
+	const client = yield* connect(dir)
+	const watched = followSession(dir, client, 0, Option.none()).pipe(
+		Effect.raceFirst(Effect.forever(follow.pipe(Effect.andThen(Effect.sleep("500 millis")))))
+	)
+	return yield* watched.pipe(Effect.tap(() => follow))
 })

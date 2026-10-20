@@ -32,7 +32,7 @@ export class StuckDetector {
 }
 
 /** Canonical action signature: tool + its arguments, minus the free-text label. */
-export function actionSignature(tool: string, input: Record<string, unknown>): string {
-	const { label: _label, ...rest } = input
+export function actionSignature(tool: string, input: unknown): string {
+	const { label: _label, ...rest } = input && typeof input === "object" ? (input as Record<string, unknown>) : {}
 	return `${tool}:${JSON.stringify(rest, Object.keys(rest).sort())}`
 }

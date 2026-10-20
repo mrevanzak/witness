@@ -2,7 +2,7 @@ import { ReportManifest, ReportSection, Usage, Verdict, VerdictCriterion } from 
 import { Option } from "effect"
 import { describe, expect, it } from "vitest"
 import { referencedMedia } from "../src/publish.ts"
-import { hostedSection } from "../src/upload.ts"
+import { hostedSection } from "../src/report.ts"
 
 const criterion = (id: string, status: "pass" | "fail", kind: "feature" | "regression" = "feature") =>
 	new VerdictCriterion({
@@ -37,12 +37,11 @@ const section = (label: string, overall: "pass" | "fail", gif?: string) =>
 		...(gif ? { gif } : {}),
 	})
 
-const manifest = (sections: readonly ReportSection[]) =>
+const manifest = (sections: readonly [ReportSection, ...ReportSection[]]) =>
 	new ReportManifest({
 		createdAt: "2026-10-20T00:00:00Z",
 		intro: "",
 		notes: ["Seeded one todo"],
-		overall: sections[0]!.verdict.overall,
 		preview: "production build in a fresh computer",
 		sections,
 		title: "Empty titles",

@@ -1,49 +1,34 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Plan } from "@witness/domain"
+import { Criterion } from "@witness/domain"
 import { Option } from "effect"
-import type { CriterionResult, ExecuteResult } from "../src/executor.ts"
-import { buildVerdict, testerReview } from "../src/reviewer.ts"
+import { buildVerdict, type CriterionRecord, type ModeRun, pendingRecord, testerReview } from "../src/criteria.ts"
 
-const plan = new Plan({
-	criteria: [
-		{ description: "empty title shows error", evidence: "", how_to_check: "", id: "C1", kind: "feature" },
-		{ description: "normal todo works", evidence: "", how_to_check: "", id: "C2", kind: "regression" },
-	],
-	summary: "s",
-})
-const result = (over: Partial<CriterionResult> & { id: string }): CriterionResult => ({
-	beganAt: undefined,
-	console: [],
-	endedAt: undefined,
-	evidence: undefined,
-	forced: undefined,
-	network: [],
-	notes: "",
-	screenshot: undefined,
+const C1 = new Criterion({ description: "empty title shows error", id: "C1", kind: "feature" })
+const C2 = new Criterion({ description: "normal todo works", id: "C2", kind: "regression" })
+const result = (criterion: Criterion, over: Partial<CriterionRecord>): CriterionRecord => ({
+	...pendingRecord(criterion),
 	status: "pass",
-	steps: 0,
 	...over,
 })
 const exec = (
-	c1: Partial<CriterionResult> = {}
-): Pick<ExecuteResult, "criteria" | "console" | "network" | "stoppedBecause" | "summary"> => ({
+	c1: Partial<CriterionRecord> = {}
+): Pick<ModeRun, "records" | "console" | "network" | "stoppedBecause" | "summary"> => ({
 	console: [
 		{ at: 15_000, text: "boom", type: "error", url: "http://x" },
 		{ at: 15_100, text: "noise", type: "log", url: "http://x" },
 	],
-	criteria: [
-		result({
+	network: [],
+	records: [
+		result(C1, {
 			beganAt: 11_000,
 			endedAt: 19_960,
-			id: "C1",
 			notes: "no error",
 			screenshot: "c1-fail.png",
 			status: "fail",
 			...c1,
 		}),
-		result({ beganAt: 20_000, endedAt: 30_000, id: "C2", notes: "added", screenshot: "c2-pass.png", status: "pass" }),
+		result(C2, { beganAt: 20_000, endedAt: 30_000, notes: "added", screenshot: "c2-pass.png", status: "pass" }),
 	],
-	network: [],
 	stoppedBecause: "done",
 	summary: "done",
 })
@@ -53,9 +38,7 @@ describe("buildVerdict", () => {
 	it("uses reviewer statuses, video times relative to t0, and only error-level console lines", () => {
 		const v = buildVerdict({
 			duration: Option.some(21),
-			exec: exec(),
 			modelId: "m",
-			plan,
 			review: {
 				criteria: [
 					{ explanation: "Error never appears.", id: "C1", status: "fail" },
@@ -63,6 +46,7 @@ describe("buildVerdict", () => {
 				],
 				notes: "",
 			},
+			run: exec(),
 			t0: Option.some(10_000),
 			usage,
 		})
@@ -80,9 +64,7 @@ describe("buildVerdict", () => {
 	it("never lets the reviewer override an orchestrator-forced block", () => {
 		const v = buildVerdict({
 			duration: Option.some(21),
-			exec: exec({ forced: "wall_time", status: "blocked" }),
 			modelId: "m",
-			plan,
 			review: {
 				criteria: [
 					{ explanation: "", id: "C1", status: "pass" },
@@ -90,6 +72,7 @@ describe("buildVerdict", () => {
 				],
 				notes: "",
 			},
+			run: exec({ forced: "wall_time", status: "blocked" }),
 			t0: Option.some(10_000),
 			usage,
 		})
@@ -100,10 +83,9 @@ describe("buildVerdict", () => {
 	it("falls back to the tester's statuses, without timestamps when t0 is unknown", () => {
 		const v = buildVerdict({
 			duration: Option.none(),
-			exec: exec(),
 			modelId: "m",
-			plan,
 			review: testerReview(exec()),
+			run: exec(),
 			t0: Option.none(),
 			usage,
 		})

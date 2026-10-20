@@ -3,6 +3,7 @@
 // the structured-output format). ClaudeModel wraps the official SDK; tests and the
 // scripted e2e provide their own layer.
 import Anthropic from "@anthropic-ai/sdk"
+import { messageOf } from "@witness/domain"
 import { Config, Context, Effect, Layer, Option, Redacted, Ref, Schema } from "effect"
 
 type CreateParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming
@@ -141,7 +142,7 @@ export class Model extends Context.Service<
 				const m = yield* Effect.tryPromise({
 					catch: (e) =>
 						new ModelError({
-							message: e instanceof Error ? e.message : String(e),
+							message: messageOf(e),
 							status: e instanceof Anthropic.APIError ? (e.status ?? null) : null,
 						}),
 					try: (signal) => client.beta.messages.create(params(req), { signal }),

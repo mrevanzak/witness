@@ -4,11 +4,11 @@
 // protected by a per-run token.
 
 import { randomBytes } from "node:crypto"
-import { chmodSync, existsSync, mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { resolve } from "node:path"
+import type { ServiceSpec } from "@witness/domain"
 import Docker from "dockerode"
-import { Config, Effect, Layer, Option, Redacted, Schedule } from "effect"
+import { Config, Effect, FileSystem, Layer, Option, Redacted, Schedule } from "effect"
 import { HttpClient } from "effect/http"
 import {
 	type Computer,
@@ -17,41 +17,53 @@ import {
 	type ComputerSpec,
 	ComputerStartTimeoutError,
 	DockerError,
-	type ServiceSpec,
 } from "./computer.ts"
 import { makeControlClient } from "./control-client.ts"
+import { messageOf } from "./message.ts"
+import { CONTROL_PORT, SHUTDOWN_GRACE_SECONDS } from "./protocol.ts"
 
 const LABEL = "witness.run"
 const ROLE = "witness.role"
 const GB = 1024 ** 3
-
-/** dockerode reads DOCKER_HOST or /var/run/docker.sock but not docker contexts; also try OrbStack and Docker Desktop sockets. */
-const dockerClient = (dockerHost: Option.Option<string>): Docker => {
-	if (Option.isSome(dockerHost)) {
-		return new Docker()
-	}
-	const candidates = [
-		"/var/run/docker.sock",
-		`${homedir()}/.orbstack/run/docker.sock`,
-		`${homedir()}/.docker/run/docker.sock`,
-	]
-	const socketPath = candidates.find((p) => existsSync(p))
-	return socketPath ? new Docker({ socketPath }) : new Docker()
-}
+const CONTROL = `${CONTROL_PORT}/tcp`
+const VNC = "6080/tcp"
+/** `docker stop` grace: the computer's shutdown budget plus start.sh's own teardown. */
+const STOP_GRACE_SECONDS = SHUTDOWN_GRACE_SECONDS + 3
 
 export const DockerComputerProvider = Layer.effect(
 	ComputerProvider,
 	Effect.gen(function* () {
-		const docker = dockerClient(yield* Config.option(Config.String("DOCKER_HOST")))
-		const defaultImage = yield* Config.String("WITNESS_COMPUTER_IMAGE").pipe(Config.withDefault("witness-computer:dev"))
+		const fs = yield* FileSystem.FileSystem
 		const httpClient = yield* HttpClient.HttpClient
+		const defaultImage = yield* Config.String("WITNESS_COMPUTER_IMAGE").pipe(Config.withDefault("witness-computer:dev"))
+
+		// dockerode reads DOCKER_HOST or /var/run/docker.sock but not docker contexts; also try OrbStack and Docker Desktop sockets.
+		const docker = yield* Effect.gen(function* () {
+			if (Option.isSome(yield* Config.option(Config.String("DOCKER_HOST")))) {
+				return new Docker()
+			}
+			for (const socketPath of [
+				"/var/run/docker.sock",
+				`${homedir()}/.orbstack/run/docker.sock`,
+				`${homedir()}/.docker/run/docker.sock`,
+			]) {
+				if (yield* fs.exists(socketPath).pipe(Effect.orElseSucceed(() => false))) {
+					return new Docker({ socketPath })
+				}
+			}
+			return new Docker()
+		})
 
 		const call = <A>(operation: string, f: () => Promise<A>) =>
-			Effect.tryPromise({
-				catch: (e) => new DockerError({ message: e instanceof Error ? e.message : String(e), operation }),
-				try: f,
-			})
+			Effect.tryPromise({ catch: (e) => new DockerError({ message: messageOf(e), operation }), try: f })
 
+		const imageExists = (image: string) =>
+			call("inspectImage", () => docker.getImage(image).inspect()).pipe(
+				Effect.as(true),
+				Effect.orElseSucceed(() => false)
+			)
+
+		/** Stops (with the shutdown grace) and removes every container and network of one run. */
 		const removeRun = Effect.fn("DockerComputerProvider.removeRun")(function* (runId: string) {
 			const containers = yield* call("listContainers", () =>
 				docker.listContainers({ all: true, filters: { label: [`${LABEL}=${runId}`] } })
@@ -60,9 +72,11 @@ export const DockerComputerProvider = Layer.effect(
 				containers,
 				(c) => {
 					const ct = docker.getContainer(c.Id)
-					return (c.State === "running" ? call("stop", () => ct.stop({ t: 3 })).pipe(Effect.ignore) : Effect.void).pipe(
-						Effect.andThen(call("remove", () => ct.remove({ force: true, v: true })).pipe(Effect.ignore))
-					)
+					return (
+						c.State === "running"
+							? call("stop", () => ct.stop({ t: STOP_GRACE_SECONDS })).pipe(Effect.ignore)
+							: Effect.void
+					).pipe(Effect.andThen(call("remove", () => ct.remove({ force: true, v: true })).pipe(Effect.ignore)))
 				},
 				{ concurrency: "unbounded", discard: true }
 			)
@@ -90,35 +104,32 @@ export const DockerComputerProvider = Layer.effect(
 			return runs.size
 		}).pipe(Effect.withSpan("DockerComputerProvider.cleanupOrphans"))
 
-		const pullIfMissing = (image: string) =>
-			call("inspectImage", () => docker.getImage(image).inspect()).pipe(
-				Effect.asVoid,
-				Effect.catchTag("DockerError", () =>
-					call("pull", async () => {
-						const stream = await docker.pull(image)
-						await new Promise<void>((res, rej) =>
-							docker.modem.followProgress(stream, (err: Error | null) => (err ? rej(err) : res()))
-						)
-					})
+		const pullIfMissing = Effect.fnUntraced(function* (image: string) {
+			if (yield* imageExists(image)) {
+				return
+			}
+			yield* call("pull", async () => {
+				const stream = await docker.pull(image)
+				await new Promise<void>((res, rej) =>
+					docker.modem.followProgress(stream, (err: Error | null) => (err ? rej(err) : res()))
 				)
-			)
+			})
+		})
 
 		const acquire = Effect.fnUntraced(function* (spec: ComputerSpec) {
-			const image = spec.image ?? defaultImage
-			yield* call("inspectImage", () => docker.getImage(image).inspect()).pipe(
-				Effect.catchTag("DockerError", () =>
-					Effect.fail(
-						new ComputerImageMissingError({
-							image,
-							message: `computer image ${image} not found; build it with \`witness image\` (\`pnpm image:build\` in a witness checkout)`,
-						})
-					)
-				)
-			)
+			const image = defaultImage
+			if (!(yield* imageExists(image))) {
+				return yield* new ComputerImageMissingError({
+					image,
+					message: `computer image ${image} not found; build it with \`witness image\` (\`pnpm image:build\` in a witness checkout)`,
+				})
+			}
 			const artifactsDir = resolve(spec.artifactsDir)
-			mkdirSync(artifactsDir, { recursive: true })
 			// The computer runs as uid 1000; on Linux hosts the bind mount keeps host ownership.
-			chmodSync(artifactsDir, 0o777)
+			yield* fs.makeDirectory(artifactsDir, { recursive: true }).pipe(
+				Effect.andThen(fs.chmod(artifactsDir, 0o777)),
+				Effect.mapError((e) => new DockerError({ message: e.message, operation: "artifactsDir" }))
+			)
 
 			const labels = { [LABEL]: spec.runId }
 			const network = `witness-${spec.runId}`
@@ -127,20 +138,16 @@ export const DockerComputerProvider = Layer.effect(
 			)
 			const token = Redacted.make(randomBytes(24).toString("base64url"))
 			const ports: Record<string, Array<{ HostIp: string; HostPort: string }>> = {
-				"7070/tcp": [{ HostIp: "127.0.0.1", HostPort: "" }],
+				[CONTROL]: [{ HostIp: "127.0.0.1", HostPort: "" }],
 			}
 			if (spec.enableVnc) {
-				ports["6080/tcp"] = [{ HostIp: "127.0.0.1", HostPort: "" }]
+				ports[VNC] = [{ HostIp: "127.0.0.1", HostPort: "" }]
 			}
 			const memory = (spec.memoryGb ?? 4) * GB
 
 			const container = yield* call("createContainer", () =>
 				docker.createContainer({
-					Env: [
-						`CONTROL_TOKEN=${Redacted.value(token)}`,
-						`ENABLE_VNC=${spec.enableVnc ? 1 : 0}`,
-						...Object.entries(spec.env ?? {}).map(([k, v]) => `${k}=${v}`),
-					],
+					Env: [`CONTROL_TOKEN=${Redacted.value(token)}`, `ENABLE_VNC=${spec.enableVnc ? 1 : 0}`],
 					ExposedPorts: Object.fromEntries(Object.keys(ports).map((p) => [p, {}])),
 					HostConfig: {
 						Binds: [`${artifactsDir}:/artifacts`],
@@ -167,14 +174,18 @@ export const DockerComputerProvider = Layer.effect(
 			yield* call("start", () => container.start())
 			const info = yield* call("inspect", () => container.inspect())
 			const hostPort = (p: string) => info.NetworkSettings.Ports[p]?.[0]?.HostPort
-			const url = `http://127.0.0.1:${hostPort("7070/tcp")}`
+			const controlPort = hostPort(CONTROL)
+			if (controlPort === undefined) {
+				return yield* new DockerError({ message: `${CONTROL} was not published on the host`, operation: "inspect" })
+			}
+			const url = `http://127.0.0.1:${controlPort}`
 			const control = yield* makeControlClient(url, Redacted.value(token)).pipe(
 				Effect.provideService(HttpClient.HttpClient, httpClient)
 			)
 
 			yield* control.health.pipe(
-				Effect.filterOrFail((h) => h.ok),
-				Effect.retry({ schedule: Schedule.spaced("200 millis"), times: 150 }),
+				Effect.retry({ schedule: Schedule.spaced("200 millis") }),
+				Effect.timeout("30 seconds"),
 				Effect.mapError(
 					() =>
 						new ComputerStartTimeoutError({
@@ -188,7 +199,7 @@ export const DockerComputerProvider = Layer.effect(
 				yield* pullIfMissing(svc.image)
 				const c = yield* call("createService", () =>
 					docker.createContainer({
-						Env: Object.entries(svc.env ?? {}).map(([k, v]) => `${k}=${v}`),
+						Env: Object.entries(svc.env).map(([k, v]) => `${k}=${v}`),
 						Image: svc.image,
 						Labels: { [LABEL]: spec.runId, [ROLE]: `service:${name}` },
 						name: `witness-${spec.runId}-${name}`,
@@ -209,10 +220,9 @@ export const DockerComputerProvider = Layer.effect(
 
 			const computer: Computer = {
 				...control,
-				control: { token: Redacted.value(token), url },
 				id: container.id,
 				liveView: spec.enableVnc
-					? `http://127.0.0.1:${hostPort("6080/tcp")}/vnc_lite.html?view_only=true&scale=true`
+					? `http://127.0.0.1:${hostPort(VNC)}/vnc_lite.html?view_only=true&scale=true`
 					: undefined,
 				network,
 				putArchive: (tar, destDir) =>
@@ -223,9 +233,7 @@ export const DockerComputerProvider = Layer.effect(
 			return computer
 		})
 
-		const create = Effect.fn("DockerComputerProvider.create")(function* (
-			spec: ComputerSpec & { readonly keep?: boolean }
-		) {
+		const create = Effect.fn("DockerComputerProvider.create")(function* (spec: ComputerSpec) {
 			return yield* Effect.acquireRelease(
 				// A half-created run (failed health check) is removed before the error propagates.
 				acquire(spec).pipe(Effect.onError(() => removeRun(spec.runId).pipe(Effect.ignore))),
@@ -235,14 +243,10 @@ export const DockerComputerProvider = Layer.effect(
 								cleanup: `docker rm -f $(docker ps -aq --filter label=${LABEL}=${spec.runId})`,
 								id: c.id.slice(0, 12),
 							})
-						: call("stop", () => docker.getContainer(c.id).stop({ t: 5 })).pipe(
-								Effect.ignore,
-								Effect.andThen(removeRun(spec.runId)),
-								Effect.ignore
-							)
+						: removeRun(spec.runId).pipe(Effect.ignore)
 			)
 		})
 
-		return ComputerProvider.of({ cleanupOrphans, create, removeRun })
+		return ComputerProvider.of({ cleanupOrphans, create })
 	})
 )

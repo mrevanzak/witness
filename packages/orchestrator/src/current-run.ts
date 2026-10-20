@@ -1,9 +1,11 @@
 // The run in progress: its directory, redacted event log and artifact writers.
 // runs/<id>/ is orchestrator-owned; only runs/<id>/computer/ is mounted into the
 // computer (the app under test must not be able to write verdict.json).
+// Files are written whole (temp file, then rename), since the CLI and the live
+// view read them while the run goes.
 
 import { randomBytes } from "node:crypto"
-import { redact, redactDeep } from "@witness/domain"
+import { type CriterionKind, type CriterionStatus, isRedactable, redact, redactDeep } from "@witness/domain"
 import { Clock, Context, Effect, FileSystem, Layer, Path, Ref, Schema } from "effect"
 
 /** Writing a run artifact failed. */
@@ -11,6 +13,29 @@ export class RunWriteError extends Schema.TaggedError<RunWriteError>()("RunWrite
 	file: Schema.String,
 	message: Schema.String,
 }) {}
+
+type Declared = { readonly description: string; readonly id: string; readonly kind: CriterionKind }
+
+/** Log events the live view reads, with the data it reads from them. Other events carry any data. */
+export type LiveEventData = {
+	readonly "boot.blocked": { readonly message: string; readonly stage: string }
+	readonly "boot.setup": { readonly cmd: string; readonly ms: number }
+	readonly "computer.created": { readonly id: string; readonly liveView: string | undefined; readonly network: string }
+	readonly "criterion.declared": Declared
+	readonly "plan.done": { readonly criteria: readonly Declared[] }
+	readonly "run.blocked": { readonly message: string; readonly reason: string }
+	readonly "run.start": {
+		readonly base: string | null
+		readonly mode: string
+		readonly prefix: string
+		readonly repo: string
+		readonly runDir: string
+		readonly sha: string
+	}
+	readonly "state.start": { readonly sha: string; readonly state: "before" | "after" }
+	readonly verdict: { readonly criteria: readonly string[]; readonly overall: CriterionStatus; readonly usd: number }
+}
+type LogData<E extends string> = E extends keyof LiveEventData ? LiveEventData[E] : Record<string, unknown>
 
 /** What a live viewer receives: run log events and steps, redacted, in order. */
 export type LiveEvent =
@@ -38,10 +63,12 @@ export class CurrentRun extends Context.Service<
 		publish: Publish
 		addSecrets: (values: readonly string[]) => Effect.Effect<void>
 		/** Appends a redacted event to run.log.jsonl and logs it. */
-		log: (event: string, data?: Record<string, unknown>) => Effect.Effect<void>
+		log: <E extends string>(event: E, data?: LogData<E>) => Effect.Effect<void>
 		/** Encodes with `schema`, redacts, and writes `<dir>/<name>`. Returns the path. */
 		writeJson: <A, I>(name: string, schema: Schema.Codec<A, I>, value: A) => Effect.Effect<string, RunWriteError>
 		writeText: (name: string, text: string) => Effect.Effect<string, RunWriteError>
+		/** Appends redacted text to `<dir>/<name>`. */
+		appendText: (name: string, text: string) => Effect.Effect<void, RunWriteError>
 		writeBytes: (name: string, data: Uint8Array) => Effect.Effect<string, RunWriteError>
 	}
 >()("witness/orchestrator/CurrentRun") {
@@ -62,56 +89,53 @@ export class CurrentRun extends Context.Service<
 				const fail = (file: string) => (e: { readonly message: string }) =>
 					new RunWriteError({ file, message: e.message })
 
-				const writeText = Effect.fn("CurrentRun.writeText")(function* (name: string, text: string) {
+				/** Writes `data` to a temp file next to `name`, then renames it into place. */
+				const writeWhole = Effect.fnUntraced(function* (name: string, data: Uint8Array | string) {
 					const file = path.join(dir, name)
+					const tmp = `${file}.${randomBytes(4).toString("hex")}.tmp`
 					yield* fs.makeDirectory(path.dirname(file), { recursive: true }).pipe(Effect.mapError(fail(file)))
-					yield* fs.writeFileString(file, redact(text, yield* Ref.get(secrets))).pipe(Effect.mapError(fail(file)))
+					yield* (typeof data === "string" ? fs.writeFileString(tmp, data) : fs.writeFile(tmp, data)).pipe(
+						Effect.mapError(fail(file))
+					)
+					yield* fs.rename(tmp, file).pipe(Effect.mapError(fail(file)))
 					return file
 				})
 
-				const writeBytes = Effect.fn("CurrentRun.writeBytes")(function* (name: string, data: Uint8Array) {
+				const writeText = Effect.fn("CurrentRun.writeText")(function* (name: string, text: string) {
+					return yield* writeWhole(name, redact(text, yield* Ref.get(secrets)))
+				})
+
+				const appendText = Effect.fn("CurrentRun.appendText")(function* (name: string, text: string) {
 					const file = path.join(dir, name)
-					yield* fs.makeDirectory(path.dirname(file), { recursive: true }).pipe(Effect.mapError(fail(file)))
-					yield* fs.writeFile(file, data).pipe(Effect.mapError(fail(file)))
-					return file
+					yield* fs
+						.writeFileString(file, redact(text, yield* Ref.get(secrets)), { flag: "a" })
+						.pipe(Effect.mapError(fail(file)))
 				})
 
 				const writeJson = <A, I>(name: string, schema: Schema.Codec<A, I>, value: A) =>
-					Schema.encodeEffect(schema)(value).pipe(
-						Effect.mapError(fail(name)),
-						Effect.flatMap((encoded) =>
-							Effect.gen(function* () {
-								return yield* writeText(
-									name,
-									`${JSON.stringify(redactDeep(encoded, yield* Ref.get(secrets)), null, 2)}\n`
-								)
-							})
-						)
-					)
+					Effect.gen(function* () {
+						const encoded = yield* Schema.encodeEffect(schema)(value).pipe(Effect.mapError(fail(name)))
+						return yield* writeText(name, `${JSON.stringify(redactDeep(encoded, yield* Ref.get(secrets)), null, 2)}\n`)
+					})
 
 				const log = Effect.fn("CurrentRun.log")(function* (event: string, data: Record<string, unknown> = {}) {
-					const s = yield* Ref.get(secrets)
 					const at = new Date(yield* Clock.currentTimeMillis).toISOString()
-					const clean = redactDeep(data, s)
-					yield* fs
-						.writeFileString(path.join(dir, "run.log.jsonl"), `${JSON.stringify({ at, event, ...clean })}\n`, {
-							flag: "a",
-						})
-						.pipe(Effect.ignore)
+					const clean = redactDeep(data, yield* Ref.get(secrets))
+					yield* appendText("run.log.jsonl", `${JSON.stringify({ at, event, ...clean })}\n`).pipe(Effect.ignore)
 					yield* Effect.logInfo(event, clean).pipe(Effect.annotateLogs("run", runId))
 					yield* publish({ at, data: clean, event, type: "log" })
 				})
 
 				return CurrentRun.of({
-					addSecrets: (values) =>
-						Ref.update(secrets, (s) => [...new Set([...s, ...values.filter((v) => v.length >= 3)])]),
+					addSecrets: (values) => Ref.update(secrets, (s) => [...new Set([...s, ...values.filter(isRedactable)])]),
+					appendText,
 					computerDir,
 					dir,
 					id: runId,
-					log,
+					log: log as CurrentRun["Service"]["log"],
 					publish,
 					secrets: Ref.get(secrets),
-					writeBytes,
+					writeBytes: (name, data) => writeWhole(name, data),
 					writeJson,
 					writeText,
 				})

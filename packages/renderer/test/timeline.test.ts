@@ -3,13 +3,18 @@ import {
 	buildTimeline,
 	captionCues,
 	clampCenter,
+	criterionStatesAt,
 	cursorAt,
 	DEFAULTS,
 	focusPoints,
+	isClick,
+	isVisualStep,
+	LAYOUTS,
 	mergeWindows,
 	outputTimeOf,
 	pace,
 	type StepIn,
+	seekOf,
 	sourceTimeAt,
 	webVtt,
 	zoomAt,
@@ -23,6 +28,15 @@ describe("clampCenter", () => {
 		expect(clampCenter(0, 0, 2)).toEqual({ cx: 480, cy: 270 })
 		expect(clampCenter(1920, 1080, 2)).toEqual({ cx: 1440, cy: 810 })
 		expect(clampCenter(960, 540, 2)).toEqual({ cx: 960, cy: 540 })
+	})
+})
+
+describe("isVisualStep / isClick", () => {
+	it("tells on-screen actions and clicks from bookkeeping steps", () => {
+		expect((["click", "drag", "type", "key", "navigate"] as const).every(isVisualStep)).toBe(true)
+		expect((["wait", "still", "begin_criterion", "page_snapshot"] as const).some(isVisualStep)).toBe(false)
+		expect((["click", "double_click", "right_click", "click_element"] as const).every(isClick)).toBe(true)
+		expect((["drag", "scroll", "type"] as const).some(isClick)).toBe(false)
 	})
 })
 
@@ -178,7 +192,6 @@ describe("buildTimeline", () => {
 				description: "Empty title shows an error",
 				explanation: "No error shown.",
 				id: "C1",
-				kind: "feature",
 				screenshot: "c1-fail.png",
 				status: "fail",
 			},
@@ -186,7 +199,6 @@ describe("buildTimeline", () => {
 				description: "Normal todo works",
 				explanation: "Added.",
 				id: "C2",
-				kind: "regression",
 				screenshot: "c2-pass.png",
 				status: "pass",
 			},
@@ -194,7 +206,6 @@ describe("buildTimeline", () => {
 		overall: "fail",
 		sourceDuration: last + 3,
 		steps,
-		title: "Validate empty todo titles",
 	} satisfies Parameters<typeof buildTimeline>[0]
 	const tl = buildTimeline(input)
 
@@ -230,16 +241,47 @@ describe("buildTimeline", () => {
 		}
 	})
 
-	it("adds a title card per criterion and a caption per labelled action", () => {
-		expect(tl.cards.map((c) => c.id)).toEqual(["C1", "C2"])
+	it("records each criterion's check window and a caption per labelled action", () => {
+		expect(tl.criteria.map(({ id, begin, end, status }) => ({ begin, end, id, status }))).toEqual([
+			{ begin: 1, end: 66, id: "C1", status: "fail" },
+			{ begin: 68, end: last, id: "C2", status: "pass" },
+		])
 		expect(tl.captions).toHaveLength(14)
 		for (const c of tl.captions) {
 			expect(c.end).toBeGreaterThan(c.start)
 		}
 	})
 
-	it("drops the end card when endCardSec is 0 (hosted layout)", () => {
-		const bare = buildTimeline({ ...input, options: { endCardSec: 0 } })
+	it("moves each criterion from pending to running to its status", () => {
+		const extra = buildTimeline({
+			...input,
+			criteria: [
+				...input.criteria,
+				{ description: "Never checked", explanation: "", id: "C3", screenshot: null, status: "blocked" },
+			],
+		})
+		const at = (s: number) => criterionStatesAt(extra, s).map((c) => `${c.id}:${c.state}${c.judged ? "!" : ""}`)
+		expect(at(0.5)).toEqual(["C1:pending", "C2:pending", "C3:pending"])
+		expect(at(1)).toEqual(["C1:running", "C2:pending", "C3:pending"])
+		expect(at(66)).toEqual(["C1:fail!", "C2:pending", "C3:pending"])
+		expect(at(70)).toEqual(["C1:fail!", "C2:running", "C3:pending"])
+		expect(at(last)).toEqual(["C1:fail!", "C2:pass!", "C3:pending"])
+	})
+
+	it("maps each criterion's recording range to polished seconds, to 0.1 s", () => {
+		const seek = seekOf(tl, [
+			{ id: "C1", video_ts: [1, 66] },
+			{ id: "C2", video_ts: [68, 999] },
+			{ id: "C3", video_ts: null },
+			{ id: "C4", video_ts: [999, 1000] },
+		])
+		const round1 = (s: number | null) => Math.round((s ?? Number.NaN) * 10) / 10
+		const c2 = round1(outputTimeOf(tl, 68))
+		expect(seek).toEqual({ C1: [round1(outputTimeOf(tl, 1)), round1(outputTimeOf(tl, 66))], C2: [c2, c2] })
+	})
+
+	it("drops the end card for the hosted layout", () => {
+		const bare = buildTimeline({ ...input, options: { endCardSec: LAYOUTS.hosted.endCardSec } })
 		expect(bare.segments.some((s) => s.kind === "end")).toBe(false)
 		const tail = bare.segments.at(-1)!
 		expect(tail.from + tail.frames).toBe(bare.durationInFrames)

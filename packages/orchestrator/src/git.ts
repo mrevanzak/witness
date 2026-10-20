@@ -43,17 +43,20 @@ export class Git extends Context.Service<
 			const bytes = (cwd: string, args: readonly string[]) =>
 				Effect.gen(function* () {
 					const handle = yield* spawner.spawn(ChildProcess.make("git", args, { cwd, stdin: "ignore" }))
-					const [out, err] = yield* Effect.all([Stream.runCollect(handle.stdout), Stream.runCollect(handle.stderr)], {
-						concurrency: 2,
-					})
+					const [out, err] = yield* Effect.all(
+						[Stream.mkUint8Array(handle.stdout), Stream.mkUint8Array(handle.stderr)],
+						{
+							concurrency: 2,
+						}
+					)
 					const code = yield* handle.exitCode
 					if (code !== ChildProcessSpawner.ExitCode(0)) {
 						return yield* new GitError({
 							args,
-							message: new TextDecoder().decode(concat(err)).trim() || `git exited ${code}`,
+							message: new TextDecoder().decode(err).trim() || `git exited ${code}`,
 						})
 					}
-					return concat(out)
+					return out
 				}).pipe(
 					Effect.scoped,
 					Effect.catchTag("PlatformError", (e) => Effect.fail(new GitError({ args, message: e.message })))
@@ -119,23 +122,9 @@ export class Git extends Context.Service<
 						onSome: (b) => text(r.root, ["diff", "--no-color", "--find-renames", range(r, b), "--", scope(r)]),
 					}),
 				resolve,
-				showFile: (r, file) =>
-					text(r.root, ["show", `${r.sha}:${r.prefix}${file}`]).pipe(
-						Effect.option,
-						Effect.map((o) => o)
-					),
+				showFile: (r, file) => text(r.root, ["show", `${r.sha}:${r.prefix}${file}`]).pipe(Effect.option),
 				toplevel,
 			})
 		})
 	)
-}
-
-function concat(chunks: readonly Uint8Array[]): Uint8Array {
-	const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0))
-	let off = 0
-	for (const c of chunks) {
-		out.set(c, off)
-		off += c.length
-	}
-	return out
 }

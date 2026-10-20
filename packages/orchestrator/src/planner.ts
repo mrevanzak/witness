@@ -1,11 +1,10 @@
 // Stage 1: turn the task + diff into 2-6 checkable criteria. No computer access.
 // Everything from the repo is untrusted data.
-import { type CriterionKind, Plan, redact, type WitnessConfig } from "@witness/domain"
-import { Context, Effect, Layer, Option, Schema } from "effect"
+import { AgentPlan, type CriterionKind, redact, type WitnessConfig } from "@witness/domain"
+import { Effect, Option, Schema } from "effect"
 import type { Change } from "./change.ts"
 import { CurrentRun } from "./current-run.ts"
 import { fitDiff } from "./diff-context.ts"
-import type { ModelBudgetExceeded, ModelError } from "./model.ts"
 import { Model } from "./model.ts"
 
 /** The model could not produce a usable plan. */
@@ -49,23 +48,17 @@ export const buildPlanPrompt = (change: Change, config: WitnessConfig, secrets: 
 	})
 	return [
 		`<task>\n${change.task.trim()}\n</task>`,
-		Option.match(change.context, {
-			onNone: () => "",
-			onSome: (c) => `<untrusted kind="pr-context">\n${c.slice(0, 6000)}\n</untrusted>`,
-		}),
 		`The app starts at ${config.url}. ${login}`,
 		`<untrusted kind="changed-files">\n${files}\n</untrusted>`,
 		`<untrusted kind="diff"${d.truncated ? ' truncated="true"' : ""}>\n${d.text}\n</untrusted>`,
 		`<untrusted kind="witness.yaml">\n${redact(change.configText, secrets)}\n</untrusted>`,
 		`<untrusted kind="readme-excerpt">\n${readme}\n</untrusted>`,
 		"Write the test plan.",
-	]
-		.filter(Boolean)
-		.join("\n\n")
+	].join("\n\n")
 }
 
 /** Keeps 2-6 criteria with ids C1..Cn and at least one regression criterion. Pure. */
-export const normalizePlan = (plan: PlanOutput): Effect.Effect<Plan, PlanInvalid> => {
+export const normalizePlan = (plan: PlanOutput): Effect.Effect<AgentPlan, PlanInvalid> => {
 	const criteria = plan.criteria.filter((c) => c.description.trim()).slice(0, 6)
 	if (criteria.length < 2) {
 		return Effect.fail(new PlanInvalid({ message: `plan has ${criteria.length} criteria; need 2 to 6` }))
@@ -74,65 +67,46 @@ export const normalizePlan = (plan: PlanOutput): Effect.Effect<Plan, PlanInvalid
 		return Effect.fail(new PlanInvalid({ message: "plan has no regression criterion" }))
 	}
 	return Effect.succeed(
-		new Plan({
+		new AgentPlan({
 			criteria: criteria.map((c, i) => ({ ...c, id: `C${i + 1}`, kind: c.kind satisfies CriterionKind })),
 			summary: plan.summary.trim(),
 		})
 	)
 }
 
-export class Planner extends Context.Service<
-	Planner,
-	{
-		plan: (change: Change, config: WitnessConfig) => Effect.Effect<Plan, PlanInvalid | ModelError | ModelBudgetExceeded>
+/** Turns the change into a plan: 2-6 criteria, at least one a regression check. Retries once on a bad plan. */
+export const planChange = Effect.fn("planChange")(function* (change: Change, config: WitnessConfig) {
+	const model = yield* Model
+	const run = yield* CurrentRun
+	const prompt = buildPlanPrompt(change, config, yield* run.secrets)
+	let lastError = ""
+	for (let attempt = 0; attempt < 2; attempt++) {
+		const content = lastError ? `${prompt}\n\nYour previous plan was rejected: ${lastError}. Fix that.` : prompt
+		const parsed = yield* model
+			.parse(
+				{
+					max_tokens: 16_000,
+					messages: [{ content, role: "user" }],
+					output_config: { effort: "high" },
+					system: SYSTEM,
+				},
+				PlanOutput
+			)
+			.pipe(
+				Effect.catchTag("ModelOutputInvalid", (e) => {
+					lastError = e.message
+					return Effect.succeed(Option.none<PlanOutput>())
+				})
+			)
+		if (Option.isNone(parsed)) {
+			lastError ||= "the model declined or returned no plan"
+			continue
+		}
+		const result = yield* Effect.result(normalizePlan(parsed.value))
+		if (result._tag === "Success") {
+			return result.success
+		}
+		lastError = result.failure.message
 	}
->()("witness/orchestrator/Planner") {
-	static readonly layer = Layer.effect(
-		Planner,
-		Effect.gen(function* () {
-			const model = yield* Model
-			const run = yield* CurrentRun
-
-			const plan = Effect.fn("Planner.plan")(function* (change: Change, config: WitnessConfig) {
-				const prompt = buildPlanPrompt(change, config, yield* run.secrets)
-				let lastError = ""
-				for (let attempt = 0; attempt < 2; attempt++) {
-					const content = lastError ? `${prompt}\n\nYour previous plan was rejected: ${lastError}. Fix that.` : prompt
-					const parsed = yield* model
-						.parse(
-							{
-								max_tokens: 16_000,
-								messages: [{ content, role: "user" }],
-								output_config: { effort: "high" },
-								system: SYSTEM,
-							},
-							PlanOutput
-						)
-						.pipe(
-							Effect.catchTag("ModelOutputInvalid", (e) =>
-								Effect.succeed(Option.none<PlanOutput>()).pipe(
-									Effect.tap(() =>
-										Effect.sync(() => {
-											lastError = e.message
-										})
-									)
-								)
-							)
-						)
-					if (Option.isNone(parsed)) {
-						lastError ||= "the model declined or returned no plan"
-						continue
-					}
-					const result = yield* Effect.result(normalizePlan(parsed.value))
-					if (result._tag === "Success") {
-						return result.success
-					}
-					lastError = result.failure.message
-				}
-				return yield* new PlanInvalid({ message: `could not get a valid plan: ${lastError}` })
-			})
-
-			return Planner.of({ plan })
-		})
-	)
-}
+	return yield* new PlanInvalid({ message: `could not get a valid plan: ${lastError}` })
+})

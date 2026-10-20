@@ -2,7 +2,7 @@
 // (lockfile, package scripts, Playwright's webServer, docker compose,
 // .env.example). The draft is a starting point; `witness run --boot-only`
 // proves it. It also asks where published evidence goes (`evidence`).
-import { type EvidenceDestination, parseEnvFile, parseWitnessConfig } from "@witness/domain"
+import { type EvidenceDestination, parseEnvFile, parseWitnessConfig, type WitnessConfigFile } from "@witness/domain"
 import { Config, Console, Effect, FileSystem, Option, Path, Schema } from "effect"
 import { Prompt } from "effect/cli"
 import { parse, stringify } from "yaml"
@@ -29,8 +29,10 @@ export type RepoFacts = {
 		| undefined
 }
 
+type ServiceFile = NonNullable<WitnessConfigFile["services"]>[string]
+
 export type Draft = {
-	readonly config: Record<string, unknown>
+	readonly config: WitnessConfigFile
 	/** What was guessed and what to check, one line each. */
 	readonly notes: readonly string[]
 }
@@ -137,7 +139,7 @@ export const draftConfig = (facts: RepoFacts): Draft => {
 	}
 
 	// Services from compose. Inside a run they're reachable by service name, not localhost.
-	const services: Record<string, Record<string, unknown>> = {}
+	const services: Record<string, ServiceFile> = {}
 	const hostFor = new Map<number, string>()
 	for (const [name, svc] of Object.entries(facts.compose)) {
 		if (!SERVICE_IMAGE.test(svc.image)) {
@@ -190,7 +192,7 @@ export const draftConfig = (facts: RepoFacts): Draft => {
 	}
 
 	const url = `http://localhost:${port}`
-	const config: Record<string, unknown> = {
+	const config: WitnessConfigFile = {
 		setup,
 		start,
 		url,
