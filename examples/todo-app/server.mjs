@@ -3,7 +3,8 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 
-const port = Number(process.argv[process.argv.indexOf("--port") + 1] || process.env.PORT || 3000);
+const portArg = process.argv.indexOf("--port");
+const port = Number((portArg >= 0 && process.argv[portArg + 1]) || process.env.PORT || 3000);
 const PUBLIC = join(import.meta.dirname, "public");
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css" };
 
