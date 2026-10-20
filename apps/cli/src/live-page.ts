@@ -141,7 +141,7 @@ export const LIVE_PAGE = `<!doctype html>
 		if (f) f.remove();
 		let empty = $("screen-empty");
 		if (!empty) { empty = document.createElement("div"); empty.className = "empty"; empty.id = "screen-empty"; document.querySelector(".screen").prepend(empty); }
-		empty.textContent = text + (runDir ? "\n" + runDir : "");
+		empty.textContent = text + (runDir ? "\\n" + runDir : "");
 		empty.style.whiteSpace = "pre-line";
 	}
 	let runDir = "";
