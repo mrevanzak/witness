@@ -30,6 +30,8 @@ export class Git extends Context.Service<
 			repo: RepoRef
 		) => Effect.Effect<ReadonlyArray<{ readonly status: string; readonly path: string }>, GitError>
 		showFile: (repo: RepoRef, path: string) => Effect.Effect<Option.Option<string>, GitError>
+		/** The toplevel of the repo that contains `dir`. */
+		toplevel: (dir: string) => Effect.Effect<string, GitError>
 	}
 >()("witness/orchestrator/Git") {
 	static readonly layer = Layer.effect(
@@ -119,6 +121,7 @@ export class Git extends Context.Service<
 						Effect.option,
 						Effect.map((o) => o)
 					),
+				toplevel: (dir) => line(dir, ["rev-parse", "--show-toplevel"]),
 			})
 		})
 	)

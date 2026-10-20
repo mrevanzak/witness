@@ -39,9 +39,11 @@ bash examples/todo-app/make-fixture.sh
 pnpm witness run --repo runs/fixtures/todo-app --ref feat/empty-title-broken --base main \
   --task "Empty todo titles show 'Title is required' and are not added" \
   --walkthrough examples/todo-app/walkthrough.spec.ts
-pnpm witness render runs/<run-id>
-pnpm witness report runs/<run-id>
+pnpm witness render .witness/runs/<run-id>
+pnpm witness report .witness/runs/<run-id>
 ```
+
+Runs are recorded under `.witness/runs/` at the root of the git repo you run `witness` from (`--runs-dir` overrides it). `witness init` adds `.witness/` to that repo's `.gitignore`.
 
 Each run opens a live view in your browser: the desktop as it happens, next to the checklist and the step log. Pass `--no-live` to skip it; CI never opens one. The run exits with 0 for pass, 1 for fail, 2 for blocked and 3 for usage errors, so it slots into scripts and CI.
 
