@@ -5,17 +5,13 @@ import { ReportApi } from "@witness/domain"
 import { Context, Effect, Layer, Option, Stream } from "effect"
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { HttpApiBuilder } from "effect/http-api"
+import type { WorkerEnv } from "../alchemy.run.ts"
 import { ReportsHandlers, UploadAuthLive } from "./api.ts"
 import { notFoundPage, reportPage } from "./page.ts"
 import { Bindings, ReportStore, ReportsRepo } from "./storage.ts"
 
-export interface Env {
-	readonly MEDIA: R2Bucket
-	readonly DB: D1Database
-	readonly UPLOAD_TOKEN: string
-	/** Public origin for report links, e.g. https://reports.example.com (defaults to the request's). */
-	readonly PUBLIC_URL?: string
-}
+/** Bindings declared in alchemy.run.ts: MEDIA (R2), DB (D1), UPLOAD_TOKEN, PUBLIC_URL. */
+export type Env = WorkerEnv
 
 const ID = /^[0-9A-Za-z]{22}$/
 const FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/

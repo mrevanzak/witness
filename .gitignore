@@ -14,5 +14,5 @@ examples/*/sb.env
 # Private configs for your own apps (witness.yaml, staged keys) stay out of the repo
 local/
 infra/computer/control/dist/
-.dev.vars
-.wrangler/
+# Alchemy state and local dev data
+.alchemy/
