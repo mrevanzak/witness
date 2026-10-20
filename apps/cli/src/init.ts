@@ -1,11 +1,13 @@
 // `witness init`: draft a witness.yaml from what the repo already declares
 // (lockfile, package scripts, Playwright's webServer, docker compose,
 // .env.example). The draft is a starting point; `witness run --boot-only`
-// proves it. It also asks where published evidence goes (`evidence`).
+// proves it. It also asks where published evidence goes (`evidence`) and
+// gitignores `.witness/`, where runs are recorded.
 import { type EvidenceDestination, parseEnvFile, parseWitnessConfig } from "@witness/domain"
 import { Config, Console, Effect, FileSystem, Option, Path, Schema } from "effect"
 import { Prompt } from "effect/cli"
 import { parse, stringify } from "yaml"
+import { ignoreWitnessDir } from "./runs.ts"
 
 export class InitError extends Schema.TaggedError<InitError>()("InitError", { message: Schema.String }) {}
 
@@ -400,6 +402,11 @@ export const init = Effect.fn("init")(function* (o: {
 	yield* Console.log(`wrote ${shown}\n`)
 	for (const n of draft.notes) {
 		yield* Console.log(`- ${n}`)
+	}
+	const ignore = yield* ignoreWitnessDir(repo)
+	if (Option.isSome(ignore)) {
+		const file = path.relative(process.cwd(), ignore.value)
+		yield* Console.log(`- Added .witness/ (where runs are recorded) to ${file.startsWith("..") ? ignore.value : file}.`)
 	}
 	if (evidence === "hosted") {
 		const reports = yield* Config.String("WITNESS_REPORTS_URL").pipe(Config.withDefault(""))
