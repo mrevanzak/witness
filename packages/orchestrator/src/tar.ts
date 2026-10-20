@@ -35,7 +35,7 @@ export function checksum(header: Buffer): number {
 	return sum;
 }
 
-export function chownTar(tar: Buffer, owner: { uid: number; gid: number; user: string; group: string }): Buffer {
+export function chownTar(tar: Uint8Array, owner: { uid: number; gid: number; user: string; group: string }): Buffer {
 	const out = Buffer.from(tar);
 	let off = 0;
 	while (off + BLOCK <= out.length) {

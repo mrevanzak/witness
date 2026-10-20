@@ -1,2 +1,2 @@
-export * from "./timeline.ts";
-export { renderRun, timelineForRun, type RenderResult } from "./render.ts";
+export * from "./timeline.ts"
+export { RenderError, renderRun, timelineForRun, type RenderResult } from "./render.ts"

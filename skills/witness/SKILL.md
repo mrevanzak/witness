@@ -39,8 +39,8 @@ Heavy stacks (Next + CMS builds) need `--memory-gb 9 --cpus 6`.
 ## 4. In-session: explore, then walk through
 
 1. Boot and keep: `witness run … --boot-only --keep --task noop`. The run dir holds `session.json`.
-2. Explore with `witness drive <runDir> shot | snapshot | click-text <name> | click x y | type … | key … | navigate <url> | console | logs`. Read every screenshot it writes. Learn the exact path, selectors and texts from the app and from the diff.
-3. Write `walkthrough.ts` from [`walkthrough-template.ts`](walkthrough-template.ts): declare 2–6 criteria (what the PR changes, plus one nearby flow it could break), and for each `begin` → act → `still(name, caption)` → `end(status, notes)`. Each caption is one sentence saying what the still proves.
+2. Explore with `witness drive <runDir> shot | snapshot | click-text <name> | click <x> <y> | type … | key … | navigate <url> | eval <js> | console | logs`. Read every screenshot it writes. Learn the exact path, selectors and texts from the app and from the diff.
+3. Write `walkthrough.ts` from [`walkthrough-template.ts`](walkthrough-template.ts): an Effect program that yields `Walkthrough`, declares 2–6 criteria (what the PR changes, plus one nearby flow it could break), and for each runs `begin` → act → `still(name, caption)` → `end(status, notes)`. Each caption is one sentence saying what the still proves. Its `effect` and `@witness/*` imports resolve from Witness, so the file can live anywhere.
 4. Remove the kept computer (`docker rm -f $(docker ps -aq --filter label=witness.run=<runId>)`), then run for real: `witness run … --walkthrough walkthrough.ts --task-file task.md`. For a before/after, run it once per ref (the base or baseline commit, then the head) with the same script.
 5. Read every still and `verdict.json`. A criterion you did not observe is `blocked`, never `pass`.
 
@@ -51,7 +51,7 @@ witness render <runDir>        # polished.mp4 (<60 s, zoom, captions, verdict mo
 witness report <runDir>        # report.md: "## Manual verification", stills, walkthrough, notes
 ```
 
-For a before/after, write one `report.md` that pairs the two runs' stills (before, then after, per point) and lists both walkthroughs. Notes say what was pre-existing, set up for the run, or not verified, and why.
+For a before/after: `witness compare <beforeRun> <afterRun> --out <dir> --preview "…"` writes one self-contained folder that pairs the stills, tables both verdicts and includes both videos (render each run with `--label before|after` first). Notes say what was pre-existing, set up for the run, or not verified, and why.
 
 **Done** = every criterion has a status backed by a still you read, `polished.mp4` plays, and the report links only files that exist. Give the user the verdict, the report path, and the media paths.
 

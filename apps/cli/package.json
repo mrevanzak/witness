@@ -7,9 +7,12 @@
     "witness": "./bin/witness.mjs"
   },
   "dependencies": {
+    "@effect/platform-node": "4.0.5",
     "@witness/computer": "workspace:*",
+    "@witness/domain": "workspace:*",
     "@witness/orchestrator": "workspace:*",
-    "tsx": "4.23.15",
-    "@witness/renderer": "workspace:*"
+    "@witness/renderer": "workspace:*",
+    "effect": "4.0.5",
+    "tsx": "4.23.15"
   }
 }

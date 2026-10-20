@@ -9,6 +9,8 @@
   "dependencies": {
     "@remotion/cli": "4.0.532",
     "@remotion/google-fonts": "4.0.532",
+    "@witness/domain": "workspace:*",
+    "effect": "4.0.5",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "remotion": "4.0.532"

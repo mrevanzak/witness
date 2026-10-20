@@ -1,40 +1,49 @@
-// Phase 3 live acceptance: the real model must return `pass` for the correct branch
-// and `fail` for the broken one in at least 4 of 5 runs each, with sane timestamps.
+// Live acceptance: the real model must return `pass` for the correct branch and
+// `fail` for the broken one in at least 4 of 5 runs each, with sane timestamps.
 //   ANTHROPIC_API_KEY=... pnpm acceptance:phase3 [runsPerBranch=5]
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { DockerComputerProvider } from "@witness/computer";
-import { verifierAgent, verify, type Verdict } from "../src/index.ts";
+import { NodeRuntime, NodeServices } from "@effect/platform-node"
+import { DockerComputerProvider } from "@witness/computer"
+import { Console, Effect, Layer, Option, Path, Schema } from "effect"
+import { FetchHttpClient } from "effect/http"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { Git, Model, runLayer, verify } from "../src/index.ts"
 
-const N = Number(process.argv[2] ?? 5);
-const root = resolve(import.meta.dirname, "../../..");
-const fixture = execFileSync("bash", [resolve(root, "examples/todo-app/make-fixture.sh")]).toString().trim();
-const provider = new DockerComputerProvider();
-const TASK = "Adding a todo with an empty or whitespace-only title should show 'Title is required' under the input and must not add the todo.";
-const branches = [
-	{ ref: "feat/empty-title", expect: "pass" },
-	{ ref: "feat/empty-title-broken", expect: "fail" },
-] as const;
+class AcceptanceFailed extends Schema.TaggedError<AcceptanceFailed>()("AcceptanceFailed", { message: Schema.String }) {}
 
-let ok = true;
-let usd = 0;
-for (const b of branches) {
-	let hits = 0;
-	for (let i = 1; i <= N; i++) {
-		const out = await verify(provider, { repo: fixture, ref: b.ref, base: "main", task: TASK, runsDir: resolve(root, "runs") }, verifierAgent());
-		const v: Verdict | null = out.verdictPath ? JSON.parse(readFileSync(out.verdictPath, "utf8")) : null;
-		usd += v?.usage.usd ?? 0;
-		// Timestamps must lie inside the video and be ordered.
-		const tsOk = !!v && v.criteria.every((c) => !c.video_ts || (c.video_ts[0] <= c.video_ts[1] && c.video_ts[1] <= (v.duration_s ?? 0) + 1));
-		const failTs = b.expect !== "fail" || (v?.criteria.some((c) => c.status === "fail" && c.video_ts) ?? false);
-		const hit = out.overall === b.expect && tsOk && failTs;
-		if (hit) hits++;
-		console.log(`${b.ref} #${i}: ${out.overall}${hit ? "" : "  <-- miss"}  ${v?.criteria.map((c) => `${c.id}=${c.status}`).join(" ") ?? ""}  $${v?.usage.usd.toFixed(2) ?? "?"}  ${out.runDir}`);
+const TASK = "Adding a todo with an empty or whitespace-only title should show 'Title is required' under the input and must not add the todo."
+
+const program = Effect.gen(function* () {
+	const path = yield* Path.Path
+	const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+	const root = path.resolve(import.meta.dirname, "../../..")
+	const n = Number(process.argv[2] ?? 5)
+	const fixture = (yield* spawner.string(ChildProcess.make("bash", [path.join(root, "examples/todo-app/make-fixture.sh")]))).trim()
+	const runsDir = path.join(root, "runs")
+	let ok = true
+	let usd = 0
+	for (const b of [{ ref: "feat/empty-title", expect: "pass" }, { ref: "feat/empty-title-broken", expect: "fail" }] as const) {
+		let hits = 0
+		for (let i = 1; i <= n; i++) {
+			const out = yield* verify({ repo: fixture, ref: b.ref, base: Option.some("main"), task: TASK, runsDir, mode: { _tag: "Agent" }, configPath: Option.none(), context: Option.none(), keep: false, enableVnc: false, memoryGb: 4, cpus: 2 }).pipe(
+				Effect.provide(runLayer(runsDir).agent.pipe(Layer.provideMerge(Model.claude)))
+			)
+			const v = Option.getOrUndefined(out.verdict)
+			usd += v?.usage.usd ?? 0
+			const tsOk = !!v && v.criteria.every((c) => Option.match(c.video_ts, { onNone: () => true, onSome: ([a, z]) => a <= z && z <= (v.duration_s ?? 0) + 1 }))
+			const failTs = b.expect !== "fail" || (v?.criteria.some((c) => c.status === "fail" && Option.isSome(c.video_ts)) ?? false)
+			const hit = out.overall === b.expect && tsOk && failTs
+			if (hit) hits++
+			yield* Console.log(`${b.ref} #${i}: ${out.overall}${hit ? "" : "  <-- miss"}  ${v?.criteria.map((c) => `${c.id}=${c.status}`).join(" ") ?? ""}  $${v?.usage.usd.toFixed(2) ?? "?"}  ${out.runDir}`)
+		}
+		const pass = hits >= Math.ceil(n * 0.8)
+		ok &&= pass
+		yield* Console.log(`=> ${b.ref}: ${hits}/${n} ${pass ? "OK" : "NOT OK"}\n`)
 	}
-	const pass = hits >= Math.ceil(N * 0.8);
-	ok &&= pass;
-	console.log(`=> ${b.ref}: ${hits}/${N} ${pass ? "OK" : "NOT OK"}\n`);
-}
-console.log(`total model spend ≈ $${usd.toFixed(2)}`);
-process.exit(ok ? 0 : 1);
+	yield* Console.log(`total model spend ≈ $${usd.toFixed(2)}`)
+	if (!ok) return yield* new AcceptanceFailed({ message: "live acceptance failed" })
+})
+
+program.pipe(
+	Effect.provide(Layer.mergeAll(Git.layer, DockerComputerProvider).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)))),
+	NodeRuntime.runMain
+)

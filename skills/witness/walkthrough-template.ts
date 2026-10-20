@@ -1,30 +1,31 @@
-// Walkthrough for `witness run --walkthrough <this file>`. Copy it next to the run's
-// task file, then replace the criteria and steps with the path you explored.
-// Coordinates are screen pixels (1920x1080); prefer clickText / findElement.
-import type { Walkthrough } from "@witness/orchestrator";
+// Walkthrough template (in-session mode): copy next to the run's task file and
+// replace the criteria and steps with the path you explored. Run it with
+//   witness run ... --walkthrough walkthrough.ts --task-file task.md
+import { Walkthrough } from "@witness/orchestrator"
+import { Effect } from "effect"
 
-const walkthrough: Walkthrough = async (w) => {
-	const origin = new URL(w.cfg.url).origin;
-	w.preview(`production build of \`${w.change.repo.sha.slice(0, 7)}\` in a fresh witness computer, at \`${w.cfg.url}\`.`);
-	w.intro("Fresh browser profile; seeded test data.");
+export default Effect.gen(function* () {
+	const w = yield* Walkthrough
+	yield* w.preview(`production build of \`${w.change.repo.sha.slice(0, 7)}\` in a fresh Witness computer, at \`${w.config.url}\`.`)
+	yield* w.intro("Fresh browser profile; the app seeds two todos.")
 
-	w.criterion("C1", "feature", "What the change should now do, phrased as pass/fail");
-	w.criterion("C2", "regression", "A nearby existing flow still works");
+	yield* w.criterion("C1", "feature", "Submitting an empty title shows 'Title is required' and adds nothing")
+	yield* w.criterion("C2", "regression", "Adding a normal todo still works")
 
-	await w.begin("C1");
-	await w.navigate(`${origin}/`, "Open the app");
-	await w.waitFor(`document.querySelector("main")`);
-	await w.clickText("Some button", "Click the button the change touched");
-	await w.waitFor(`document.body.innerText.includes("Expected text")`, { timeoutMs: 15_000 });
-	const seen = await w.evaluate<boolean>(`document.body.innerText.includes("Expected text")`);
-	await w.still("c1-result", "After clicking the button, the expected text appears.");
-	await w.end("C1", seen ? "pass" : "fail", seen ? "Expected text shown." : "Expected text never appeared.");
+	yield* w.begin("C1")
+	yield* w.clickText("Add todo", "Submit with an empty title", { tag: "button" })
+	yield* w.wait(600)
+	const c1 = yield* w.evaluate<{ error: string; left: string }>(`({ error: document.getElementById("title-error")?.textContent ?? "", left: document.getElementById("count")?.textContent ?? "" })`)
+	yield* w.still("empty-title", `Submitting an empty title: error text "${c1.error || "(none)"}", counter "${c1.left}".`)
+	const c1ok = c1.error.includes("Title is required") && c1.left.startsWith("2 ")
+	yield* w.end("C1", c1ok ? "pass" : "fail", `Error text ${c1.error ? `"${c1.error}"` : "not shown"}; counter says "${c1.left}" (was 2 items left).`)
 
-	await w.begin("C2");
-	// ...
-	await w.end("C2", "pass", "What was seen.");
-
-	w.note("Anything pre-existing, set up for this run, or not verified (and why).");
-};
-
-export default walkthrough;
+	yield* w.begin("C2")
+	yield* w.clickText("What needs doing", "Focus the title field", { tag: "input" })
+	yield* w.type("Buy bread", "Type 'Buy bread'")
+	yield* w.key("Return", "Press Enter to add")
+	yield* w.waitFor(`document.body.innerText.includes("Buy bread")`, { timeoutMs: 5000 }).pipe(Effect.ignore)
+	const added = yield* w.evaluate<boolean>(`document.body.innerText.includes("Buy bread")`)
+	yield* w.still("normal-todo", added ? "A normal todo is added to the list." : "The normal todo did not appear.")
+	yield* w.end("C2", added ? "pass" : "fail", added ? "'Buy bread' is in the list." : "'Buy bread' did not appear.")
+})

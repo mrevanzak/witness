@@ -38,15 +38,24 @@ importers:
 
   apps/cli:
     dependencies:
+      '@effect/platform-node':
+        specifier: 4.0.5
+        version: 4.0.5(effect@4.0.5)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@witness/computer':
         specifier: workspace:*
         version: link:../../packages/computer
+      '@witness/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@witness/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator
       '@witness/renderer':
         specifier: workspace:*
         version: link:../../packages/renderer
+      effect:
+        specifier: 4.0.5
+        version: 4.0.5
       tsx:
         specifier: 4.23.15
         version: 4.23.15
@@ -90,15 +99,18 @@ importers:
       '@anthropic-ai/sdk':
         specifier: 0.135.0
         version: 0.135.0(zod@4.6.7)
+      '@effect/platform-node':
+        specifier: 4.0.5
+        version: 4.0.5(effect@4.0.5)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@witness/computer':
         specifier: workspace:*
         version: link:../computer
-      yaml:
-        specifier: 2.8.1
-        version: 2.8.1
-      zod:
-        specifier: 4.6.7
-        version: 4.6.7
+      '@witness/domain':
+        specifier: workspace:*
+        version: link:../domain
+      effect:
+        specifier: 4.0.5
+        version: 4.0.5
 
   packages/renderer:
     dependencies:
@@ -108,6 +120,12 @@ importers:
       '@remotion/google-fonts':
         specifier: 4.0.532
         version: 4.0.532(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
+      '@witness/domain':
+        specifier: workspace:*
+        version: link:../domain
+      effect:
+        specifier: 4.0.5
+        version: 4.0.5
       react:
         specifier: 19.2.0
         version: 19.2.0
@@ -4598,4 +4616,5 @@ snapshots:
 
   zod@4.5.4: {}
 
-  zod@4.6.7: {}
+  zod@4.6.7:
+    optional: true

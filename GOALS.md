@@ -21,13 +21,13 @@ The codebase is written in Effect 4 end to end: services and layers for every bo
 - **Check:** `pnpm witness:smoke` passes (desktop, Chromium, click, still, stop under 3 s, `raw.mp4` within ±1 s of wall time).
 
 ### M3. Orchestrator in Effect
-- [ ] Services: `RunStore`, `Git`, `AppBooter`, `Model` (Anthropic SDK behind an Effect service), `Planner`, `Executor`, `Reviewer`, `Walkthrough`, `Reporter`.
-- [ ] Budgets, stuck detection and redaction unchanged in behaviour; walkthrough scripts are Effect programs.
+- [x] Services: `RunStore`, `Git`, `AppBooter`, `Model` (Anthropic SDK behind an Effect service), `Planner`, `Executor`, `Reviewer`, `Walkthrough`, `Reporter`.
+- [x] Budgets, stuck detection and redaction unchanged in behaviour; walkthrough scripts are Effect programs.
 - **Check:** `pnpm e2e:scripted` gives pass for `feat/empty-title` and fail for `feat/empty-title-broken`; the PR #453 walkthrough reproduces its before/after numbers.
 
 ### M4. Renderer and CLI in Effect
-- [ ] `witness` CLI on `effect/unstable/cli`: `run`, `render`, `report`, `drive`, `publish`, `upload`, `cleanup`.
-- [ ] Render driver as an Effect program over the Remotion CLI; the composition stays React.
+- [x] `witness` CLI on `effect/cli`: `run`, `render`, `report`, `drive`, `publish`, `upload`, `cleanup`.
+- [x] Render driver as an Effect program over the Remotion CLI; the composition stays React.
 - **Check:** `pnpm acceptance:phase4` passes on a failing run; `witness --help` lists every command.
 
 ### M5. Live view

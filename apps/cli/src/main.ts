@@ -1,140 +1,183 @@
-// witness run --repo . --ref HEAD --task "..."
-// witness cleanup
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { parseArgs } from "node:util";
-import { DockerComputerProvider } from "@witness/computer";
-import { renderRun } from "@witness/renderer";
-import { drive } from "./drive.ts";
-import { publish } from "./publish.ts";
-import { EXIT_CODES, writeComparisonReport, writeReport, verifierAgent, verify, walkthroughAgent, type Walkthrough } from "@witness/orchestrator";
+#!/usr/bin/env node
+// witness: independent, recorded QA for code changes.
+import { NodeRuntime, NodeServices } from "@effect/platform-node"
+import { ComputerProvider, DockerComputerProvider } from "@witness/computer"
+import { EXIT_CODES } from "@witness/domain"
+import { Git, Model, runLayer, verify, writeComparisonReport, writeReport, type VerifyMode, type WalkthroughProgram } from "@witness/orchestrator"
+import { renderRun } from "@witness/renderer"
+import { Console, Effect, FileSystem, Layer, Option, Path, Schema } from "effect"
+import { Argument, Command, Flag } from "effect/cli"
+import { FetchHttpClient } from "effect/http"
+import { register } from "node:module"
+import { pathToFileURL } from "node:url"
+import { drive } from "./Drive.ts"
+import { publish } from "./Publish.ts"
 
-const USAGE = `Usage:
-  witness run --repo <dir> [--ref HEAD] [--base <ref>] (--task "<text>" | --task-file <path>)
-             [--config witness.yaml] [--walkthrough script.ts] [--memory-gb 4] [--cpus 2]
-             [--boot-only] [--keep] [--vnc] [--runs-dir ./runs]
+/** The CLI was used wrongly (missing task, bad walkthrough file). */
+class UsageError extends Schema.TaggedError<UsageError>()("UsageError", { message: Schema.String }) {}
 
-  --config       witness.yaml outside the repo (for repos without one); may stage host files and secret env
-  --walkthrough  in-session mode: a script (default export (ctx) => ...) drives the app instead of the model
-  witness render <runDir> [--label after]   polished.mp4 + preview.gif from a finished run
-  witness report <runDir>    report.md ("## Manual verification") from a finished run
-  witness report --compare <beforeRun> <afterRun> --out <dir>   before/after report bundle
-  witness drive <runDir> …   hand-drive a kept computer (see \`witness drive\`)
-  witness publish --pr N --report <report.md> [--mode auto|description|comment] [--ego-space id] [--dry-run]
-  witness cleanup            remove computers/networks left by crashed runs
+const setExit = (code: number) => Effect.sync(() => void (process.exitCode = code))
 
-Exit codes: 0 pass, 1 fail, 2 blocked, 3 error.`;
+const loadWalkthrough = Effect.fn("loadWalkthrough")(function* (file: string) {
+	const path = yield* Path.Path
+	// Walkthroughs import `effect` and `@witness/*` from Witness's own copies, wherever they live.
+	yield* Effect.sync(() => register(new URL("./walkthrough-hooks.mjs", import.meta.url), { data: { parentURL: import.meta.url } }))
+	const mod = yield* Effect.tryPromise({
+		try: () => import(pathToFileURL(path.resolve(file)).href) as Promise<{ default?: unknown }>,
+		catch: (e) => new UsageError({ message: `cannot load walkthrough ${file}: ${e instanceof Error ? e.message : String(e)}` }),
+	})
+	if (!Effect.isEffect(mod.default)) return yield* new UsageError({ message: `${file} must default-export an Effect program (see skills/witness/walkthrough-template.ts)` })
+	return mod.default as WalkthroughProgram
+})
 
-async function main(argv: string[]): Promise<number> {
-	const [cmd, ...rest] = argv;
-	let provider = new DockerComputerProvider();
+const run = Command.make(
+	"run",
+	{
+		repo: Flag.String("repo").pipe(Flag.withDescription("App directory inside a git repo"), Flag.withDefault(".")),
+		ref: Flag.String("ref").pipe(Flag.withDescription("Commit, branch or tag to verify"), Flag.withDefault("HEAD")),
+		base: Flag.String("base").pipe(Flag.withDescription("Diff base (default: merge-base with the default branch)"), Flag.optional),
+		task: Flag.String("task").pipe(Flag.withDescription("What the change is supposed to do"), Flag.optional),
+		taskFile: Flag.FileText("task-file").pipe(Flag.withDescription("Read the task from a file"), Flag.optional),
+		config: Flag.String("config").pipe(Flag.withDescription("witness.yaml outside the repo (may stage host files and secret env)"), Flag.optional),
+		walkthrough: Flag.String("walkthrough").pipe(Flag.withDescription("In-session mode: an Effect program that drives the app instead of the model"), Flag.optional),
+		bootOnly: Flag.Boolean("boot-only").pipe(Flag.withDescription("Boot the app, take a screenshot, stop"), Flag.withDefault(false)),
+		keep: Flag.Boolean("keep").pipe(Flag.withDescription("Keep the computer running afterwards (see session.json)"), Flag.withDefault(false)),
+		vnc: Flag.Boolean("vnc").pipe(Flag.withDescription("Expose the noVNC live view"), Flag.withDefault(false)),
+		memoryGb: Flag.Int("memory-gb").pipe(Flag.withDefault(4)),
+		cpus: Flag.Int("cpus").pipe(Flag.withDefault(2)),
+		runsDir: Flag.String("runs-dir").pipe(Flag.withDefault("runs")),
+	},
+	Effect.fn(function* (f) {
+		const fs = yield* FileSystem.FileSystem
+		const path = yield* Path.Path
+		const task = Option.orElse(f.task, () => f.taskFile)
+		const bootOnly = f.bootOnly || Option.contains(task, "noop")
+		if (Option.isNone(task) && !bootOnly) return yield* new UsageError({ message: "--task or --task-file is required (or --boot-only)" })
+		const mode: VerifyMode = bootOnly
+			? { _tag: "BootOnly" }
+			: Option.isSome(f.walkthrough)
+				? { _tag: "Walkthrough", program: yield* loadWalkthrough(f.walkthrough.value) }
+				: { _tag: "Agent" }
+		const runsDir = path.resolve(f.runsDir)
+		yield* ComputerProvider.use((p) => p.cleanupOrphans).pipe(Effect.ignore)
 
-	if (cmd === "drive") return drive(rest);
-	if (cmd === "publish") return publish(rest);
-	if (cmd === "render") {
-		const label = rest.includes("--label") ? rest[rest.indexOf("--label") + 1] : undefined;
-		const r = await renderRun(rest[0]!, { label, onProgress: (l) => process.stderr.write(`\r${l.slice(0, 80).padEnd(80)}`) });
-		console.error("");
-		console.log(`${r.polished} (${r.durationSec.toFixed(1)} s)\n${r.gif}`);
-		return 0;
-	}
-	if (cmd === "report") {
-		if (rest[0] === "--compare") {
-			const { values } = parseArgs({ args: rest.slice(3), options: { out: { type: "string" }, preview: { type: "string" }, intro: { type: "string" } } });
-			if (!rest[1] || !rest[2] || !values.out) {
-				console.error("usage: witness report --compare <beforeRunDir> <afterRunDir> --out <dir> [--preview text] [--intro text]");
-				return 3;
-			}
-			console.log(writeComparisonReport({ before: rest[1], after: rest[2], outDir: values.out, preview: values.preview, intro: values.intro }));
-			return 0;
+		const layers = runLayer(runsDir)
+		const options = {
+			repo: f.repo,
+			ref: f.ref,
+			base: f.base,
+			task: Option.getOrElse(task, () => "noop"),
+			runsDir,
+			mode,
+			configPath: f.config,
+			context: Option.none<string>(),
+			keep: f.keep,
+			enableVnc: f.vnc,
+			memoryGb: f.memoryGb,
+			cpus: f.cpus,
+			onComputer: (c: { readonly liveView: string | undefined }) => (c.liveView ? Console.log(`live view: ${c.liveView}`) : Effect.void),
 		}
-		console.log(writeReport(rest[0]!));
-		return 0;
-	}
-	if (cmd === "cleanup") {
-		const n = await provider.cleanupOrphans();
-		console.log(`removed ${n} orphaned run(s)`);
-		return 0;
-	}
-	if (cmd !== "run") {
-		console.error(USAGE);
-		return cmd ? 3 : 0;
-	}
+		const outcome = yield* verify(options).pipe(Effect.provide(layers.agent.pipe(Layer.provideMerge(mode._tag === "Agent" ? Model.claude : Model.unavailable))))
 
-	const { values } = parseArgs({
-		args: rest,
-		options: {
-			repo: { type: "string", default: "." },
-			ref: { type: "string", default: "HEAD" },
-			base: { type: "string" },
-			task: { type: "string" },
-			"task-file": { type: "string" },
-			"boot-only": { type: "boolean", default: false },
-			keep: { type: "boolean", default: false },
-			vnc: { type: "boolean", default: false },
-			"runs-dir": { type: "string" },
-			config: { type: "string" },
-			walkthrough: { type: "string" },
-			"memory-gb": { type: "string" },
-			cpus: { type: "string" },
-		},
-	});
-	if (values["memory-gb"] || values.cpus) {
-		provider = new DockerComputerProvider({ memoryBytes: Number(values["memory-gb"] ?? 4) * 1024 ** 3, cpus: Number(values.cpus ?? 2) });
-	}
-	let walk: Walkthrough | undefined;
-	if (values.walkthrough) {
-		const mod = (await import(pathToFileURL(resolve(values.walkthrough)).href)) as { default?: Walkthrough };
-		if (typeof mod.default !== "function") {
-			console.error(`${values.walkthrough} must default-export an async function (ctx) => ...`);
-			return 3;
+		if (Option.isSome(outcome.blocked)) {
+			yield* Console.log(`BLOCKED (${outcome.blocked.value.reason}): ${outcome.blocked.value.message}`)
+			if (outcome.blocked.value.logTail) yield* Console.log(`--- log tail ---\n${outcome.blocked.value.logTail}`)
+		} else if (Option.isSome(outcome.bootMs)) {
+			yield* Console.log(`BOOTED in ${(outcome.bootMs.value / 1000).toFixed(1)} s (boot only, no verdict)`)
 		}
-		walk = mod.default;
-	}
-	const task = values.task ?? (values["task-file"] ? readFileSync(values["task-file"], "utf8") : undefined);
-	if (!task) {
-		console.error("--task or --task-file is required\n\n" + USAGE);
-		return 3;
-	}
+		if (Option.isSome(outcome.verdict)) {
+			const v = outcome.verdict.value
+			yield* Console.log(`\n${v.overall.toUpperCase()}`)
+			for (const c of v.criteria) yield* Console.log(`  ${c.id} ${c.status.padEnd(7)} ${c.description}${Option.match(c.video_ts, { onNone: () => "", onSome: ([a, b]) => `  [${a}s-${b}s]` })}`)
+			if (v.usage.usd > 0) yield* Console.log(`  model spend ≈ $${v.usage.usd.toFixed(2)}`)
+		}
+		yield* Console.log(`run dir: ${outcome.runDir}`)
+		if (yield* fs.exists(path.join(outcome.runDir, "session.json"))) yield* Console.log(`session: ${path.join(outcome.runDir, "session.json")}`)
+		yield* setExit(Option.isSome(outcome.bootMs) ? 0 : EXIT_CODES[outcome.overall])
+	})
+).pipe(Command.withDescription("Verify a change: boot it in a fresh computer, check it, record it, write a verdict"))
 
-	const bootOnly = values["boot-only"] || task.trim() === "noop";
-	if (!bootOnly && !walk && !process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
-		console.error("ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) is required for a verification run; use --boot-only to just boot the app.");
-		return 3;
-	}
-	await provider.cleanupOrphans().catch(() => 0);
-	const outcome = await verify(provider, {
-		repo: values.repo,
-		ref: values.ref,
-		base: values.base,
-		task,
-		bootOnly,
-		keep: values.keep,
-		enableVnc: values.vnc,
-		runsDir: values["runs-dir"],
-		configPath: values.config,
-	}, bootOnly ? undefined : walk ? walkthroughAgent(walk) : verifierAgent());
+const render = Command.make(
+	"render",
+	{
+		runDir: Argument.String("run-dir"),
+		label: Flag.String("label").pipe(Flag.withDescription('Header label, e.g. "after"'), Flag.optional),
+	},
+	Effect.fn(function* ({ runDir, label }) {
+		const r = yield* renderRun(runDir, Option.match(label, { onNone: () => ({}), onSome: (l) => ({ label: l }) }))
+		yield* Console.log(`${r.polished} (${r.durationSec.toFixed(1)} s)\n${r.gif}`)
+	})
+).pipe(Command.withDescription("Render polished.mp4 and preview.gif from a finished run"))
 
-	if (outcome.boot.status === "blocked") {
-		console.log(`BLOCKED (${outcome.boot.reason}): ${outcome.boot.detail}`);
-		if ("logTail" in outcome.boot && outcome.boot.logTail) console.log(`--- log tail ---\n${outcome.boot.logTail}`);
-	} else if (bootOnly) {
-		console.log(`BOOTED ${outcome.boot.url} in ${(outcome.boot.ms / 1000).toFixed(1)} s (boot only, no verdict)`);
-	} else {
-		const v = JSON.parse(readFileSync(outcome.verdictPath!, "utf8")) as { criteria: Array<{ id: string; status: string; description: string; video_ts: [number, number] | null }>; usage: { usd: number } };
-		console.log(`\n${outcome.overall.toUpperCase()}`);
-		for (const c of v.criteria) console.log(`  ${c.id} ${c.status.padEnd(7)} ${c.description}${c.video_ts ? `  [${c.video_ts[0]}s-${c.video_ts[1]}s]` : ""}`);
-		console.log(`  model spend ≈ $${v.usage.usd.toFixed(2)}`);
-	}
-	console.log(`run dir: ${outcome.runDir}`);
-	return bootOnly && outcome.boot.status === "ok" ? 0 : EXIT_CODES[outcome.overall];
-}
+const report = Command.make(
+	"report",
+	{ runDir: Argument.String("run-dir") },
+	Effect.fn(function* ({ runDir }) {
+		yield* Console.log(yield* writeReport(runDir))
+	})
+).pipe(Command.withDescription('Write report.md ("## Manual verification") for a finished run'))
 
-main(process.argv.slice(2)).then(
-	(code) => process.exit(code),
-	(e) => {
-		console.error(e instanceof Error ? (e.stack ?? e.message) : e);
-		process.exit(3);
-	}
-);
+const compare = Command.make(
+	"compare",
+	{
+		before: Argument.String("before-run"),
+		after: Argument.String("after-run"),
+		out: Flag.String("out").pipe(Flag.withDescription("Output folder (self-contained: report.md + media/)")),
+		preview: Flag.String("preview").pipe(Flag.optional),
+		intro: Flag.String("intro").pipe(Flag.optional),
+		note: Flag.String("note").pipe(Flag.withDescription("An extra note line"), Flag.optional),
+	},
+	Effect.fn(function* (f) {
+		yield* Console.log(yield* writeComparisonReport({ before: f.before, after: f.after, outDir: f.out, preview: f.preview, intro: f.intro, notes: Option.toArray(f.note) }))
+	})
+).pipe(Command.withDescription("Write a before/after report bundle from two runs of the same walkthrough"))
+
+const driveCmd = Command.make(
+	"drive",
+	{
+		runDir: Argument.String("run-dir"),
+		action: Argument.Literals("action", ["shot", "snapshot", "click", "click-text", "type", "key", "scroll", "navigate", "console", "network", "logs", "eval"]),
+		args: Argument.String("args").pipe(Argument.variadic()),
+	},
+	Effect.fn(function* (f) {
+		yield* drive(f.runDir, f.action, f.args)
+	})
+).pipe(Command.withDescription("Hand-drive a kept computer (run --keep) while exploring an app"))
+
+const publishCmd = Command.make(
+	"publish",
+	{
+		pr: Flag.String("pr").pipe(Flag.withDescription("PR number")),
+		report: Flag.String("report").pipe(Flag.withDescription("report.md to publish")),
+		repo: Flag.String("repo").pipe(Flag.withDefault(".")),
+		mode: Flag.Literals("mode", ["auto", "description", "comment"]).pipe(Flag.withDefault("auto")),
+		egoSpace: Flag.String("ego-space").pipe(Flag.withDescription("Ego task space signed in to GitHub (uploads media)"), Flag.optional),
+		dryRun: Flag.Boolean("dry-run").pipe(Flag.withDefault(false)),
+	},
+	Effect.fn(function* (f) {
+		yield* publish(f)
+	})
+).pipe(Command.withDescription("Put a report on a PR: your PR's description, or a comment on someone else's"))
+
+const cleanup = Command.make(
+	"cleanup",
+	{},
+	Effect.fn(function* () {
+		const n = yield* ComputerProvider.use((p) => p.cleanupOrphans)
+		yield* Console.log(`removed ${n} orphaned run(s)`)
+	})
+).pipe(Command.withDescription("Remove computers and networks left by crashed runs"))
+
+const witness = Command.make("witness").pipe(
+	Command.withDescription("Independent, recorded QA for code changes made by AI agents or humans"),
+	Command.withSubcommands([run, render, report, compare, driveCmd, publishCmd, cleanup])
+)
+
+const Services = Layer.mergeAll(Git.layer, DockerComputerProvider).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)))
+
+witness.pipe(
+	Command.run({ version: "0.1.0" }),
+	Effect.catchTag("UsageError", (e) => Console.error(e.message).pipe(Effect.andThen(setExit(3)))),
+	Effect.provide(Services),
+	NodeRuntime.runMain
+)
