@@ -23,7 +23,7 @@ async function probeDuration(file: string): Promise<number> {
 	return Number.parseFloat(stdout.trim());
 }
 
-export function timelineForRun(runDir: string, sourceDuration: number, options?: Partial<TimelineOptions>): Timeline {
+export function timelineForRun(runDir: string, sourceDuration: number, options?: Partial<TimelineOptions>, label?: string): Timeline {
 	const steps: StepIn[] = readFileSync(join(runDir, "steps.jsonl"), "utf8")
 		.split("\n")
 		.filter(Boolean)
@@ -39,7 +39,7 @@ export function timelineForRun(runDir: string, sourceDuration: number, options?:
 		screenshot: c.screenshot,
 	}));
 	const title = String(runInfo.task ?? "Verification").split("\n")[0]!.replace(/^#+\s*/, "").slice(0, 110);
-	return buildTimeline({ steps, criteria, overall: verdict.overall, title, sourceDuration, options });
+	return buildTimeline({ steps, criteria, overall: verdict.overall, title, sourceDuration, options, meta: { sha: String(runInfo.sha ?? "").slice(0, 7), label } });
 }
 
 function remotionBin(): string {
@@ -47,11 +47,11 @@ function remotionBin(): string {
 	return join(dirname(require.resolve("@remotion/cli/package.json")), "remotion-cli.js");
 }
 
-export async function renderRun(runDirIn: string, opts: { onProgress?: (line: string) => void; concurrency?: number } = {}): Promise<RenderResult> {
+export async function renderRun(runDirIn: string, opts: { onProgress?: (line: string) => void; concurrency?: number; label?: string } = {}): Promise<RenderResult> {
 	const runDir = resolve(runDirIn);
 	const raw = join(runDir, "computer", "raw.mp4");
 	if (!existsSync(raw)) throw new Error(`no recording at ${raw}`);
-	const timeline = timelineForRun(runDir, await probeDuration(raw));
+	const timeline = timelineForRun(runDir, await probeDuration(raw), undefined, opts.label);
 	const outDir = join(runDir, "render");
 	mkdirSync(outDir, { recursive: true });
 	const propsPath = join(outDir, "props.json");

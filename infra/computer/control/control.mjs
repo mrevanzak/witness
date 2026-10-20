@@ -94,8 +94,8 @@ const push = (buf, item) => {
 };
 
 function watchPage(page) {
-	if (page.__acvWatched) return;
-	page.__acvWatched = true;
+	if (page.__witnessWatched) return;
+	page.__witnessWatched = true;
 	page.on("console", (m) =>
 		push(consoleBuf, { at: Date.now(), type: m.type(), text: m.text().slice(0, 2000), url: page.url() })
 	);
@@ -151,7 +151,7 @@ async function activePage() {
 }
 
 // Visible text plus interactive elements, with centres in screen pixels. Refs index
-// window.__acvRefs (no DOM mutation) and stay valid until the next snapshot.
+// window.__witnessRefs (no DOM mutation) and stay valid until the next snapshot.
 const SNAPSHOT_FN = (maxText) => {
 	const ox = window.screenX + (window.outerWidth - window.innerWidth) / 2;
 	const oy = window.screenY + (window.outerHeight - window.innerHeight);
@@ -181,7 +181,7 @@ const SNAPSHOT_FN = (maxText) => {
 			h: Math.round(r.height),
 		});
 	}
-	window.__acvRefs = refs;
+	window.__witnessRefs = refs;
 	const text = (document.body?.innerText ?? "").replace(/\n{3,}/g, "\n\n").slice(0, maxText);
 	return { url: location.href, title: document.title, viewport: { x: ox, y: oy, w: window.innerWidth, h: window.innerHeight }, text, elements };
 };

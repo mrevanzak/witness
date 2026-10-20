@@ -1,5 +1,5 @@
 {
-  "name": "acv-computer-control",
+  "name": "witness-computer-control",
   "private": true,
   "type": "module",
   "dependencies": {

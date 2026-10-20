@@ -18,6 +18,7 @@ const placeholder: PolishedProps = {
 		cards: [],
 		marks: [],
 		end: { overall: "blocked", title: "", criteria: [] },
+		meta: { sha: "" },
 	},
 };
 

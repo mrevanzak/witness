@@ -45,7 +45,7 @@ export function buildPlanPrompt(change: Change, cfg: VerifyConfig, secrets: read
 		`The app starts at ${cfg.url}. ${login}`,
 		`<untrusted kind="changed-files">\n${files}\n</untrusted>`,
 		`<untrusted kind="diff"${d.truncated ? ' truncated="true"' : ""}>\n${d.text}\n</untrusted>`,
-		`<untrusted kind="verify.yaml">\n${yaml}\n</untrusted>`,
+		`<untrusted kind="witness.yaml">\n${yaml}\n</untrusted>`,
 		`<untrusted kind="readme-excerpt">\n${readme}\n</untrusted>`,
 		"Write the test plan.",
 	]

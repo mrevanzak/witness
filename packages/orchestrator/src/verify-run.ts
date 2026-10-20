@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { ComputerProvider } from "@acv/computer";
+import type { ComputerProvider } from "@witness/computer";
 import { bootApp, type BootResult } from "./app-booter.ts";
 import { archive, changedFiles, diff, resolveRepo, showFile, type RepoRef } from "./git.ts";
 import { RunManager, type Run } from "./run-manager.ts";
@@ -19,7 +19,7 @@ export interface VerifyOptions {
 	bootOnly?: boolean;
 	/** Extra context for the planner (e.g. PR title/body). */
 	context?: string;
-	/** A verify.yaml outside the repo (for repos without one). Its `files` and `secret_env` resolve relative to it. */
+	/** A witness.yaml outside the repo (for repos without one). Its `files` and `secret_env` resolve relative to it. */
 	configPath?: string;
 }
 
@@ -51,13 +51,13 @@ export async function verify(provider: ComputerProvider, opts: VerifyOptions, ag
 	const repo = await resolveRepo(opts.repo, opts.ref, opts.base);
 	run.log("run.start", { repo: repo.root, prefix: repo.prefix, sha: repo.sha, base: repo.baseSha, task: opts.task.slice(0, 200) });
 
-	const verifyYaml = opts.configPath ? readFileSync(opts.configPath, "utf8") : await showFile(repo, "verify.yaml");
+	const verifyYaml = opts.configPath ? readFileSync(opts.configPath, "utf8") : await showFile(repo, "witness.yaml");
 	const blockedEarly = (reason: string, detail: string): VerifyOutcome => {
 		run.log("run.blocked", { reason, detail });
 		run.writeJson("verdict.json", { overall: "blocked", reason, detail, criteria: [], console_errors: [], notes: detail });
 		return { runId: run.id, runDir: run.dir, overall: "blocked", boot: { status: "blocked", reason, detail } };
 	};
-	if (!verifyYaml) return blockedEarly("no_verify_yaml", `no verify.yaml at ${repo.prefix || "the repo root"} in ${repo.sha.slice(0, 7)}`);
+	if (!verifyYaml) return blockedEarly("no_verify_yaml", `no witness.yaml at ${repo.prefix || "the repo root"} in ${repo.sha.slice(0, 7)}`);
 	let cfg: VerifyConfig;
 	try {
 		cfg = parseVerifyConfig(verifyYaml);
@@ -121,7 +121,7 @@ export async function verify(provider: ComputerProvider, opts: VerifyOptions, ag
 
 export interface AgentContext {
 	run: Run;
-	computer: import("@acv/computer").Computer;
+	computer: import("@witness/computer").Computer;
 	cfg: VerifyConfig;
 	change: Change;
 }

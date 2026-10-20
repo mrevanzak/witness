@@ -78,6 +78,8 @@ export interface Timeline {
 	cards: Array<{ start: number; end: number; id: string; kind: string; title: string }>;
 	marks: Array<{ start: number; end: number; id: string; status: string }>;
 	end: { overall: string; title: string; criteria: Array<{ id: string; status: string; description: string }> };
+	/** Short SHA and an optional label ("before"/"after") for the header. */
+	meta: { sha: string; label?: string };
 }
 
 const POINTER = new Set(["click", "double_click", "right_click", "click_element", "drag", "scroll"]);
@@ -241,6 +243,7 @@ export function buildTimeline(input: {
 	overall: string;
 	title: string;
 	sourceDuration: number;
+	meta?: { sha: string; label?: string };
 	options?: Partial<TimelineOptions>;
 }): Timeline {
 	const o = { ...DEFAULTS, ...input.options };
@@ -335,6 +338,7 @@ export function buildTimeline(input: {
 		cards,
 		marks,
 		end: { overall: input.overall, title: input.title, criteria: input.criteria.map((c) => ({ id: c.id, status: c.status, description: c.description })) },
+		meta: input.meta ?? { sha: "" },
 	};
 }
 

@@ -6,7 +6,7 @@ import { parseSteps, StepLog } from "../src/steps.ts";
 
 describe("StepLog", () => {
 	it("appends redacted steps and finalizes t relative to t0", () => {
-		const p = join(mkdtempSync(join(tmpdir(), "acv-steps-")), "steps.jsonl");
+		const p = join(mkdtempSync(join(tmpdir(), "witness-steps-")), "steps.jsonl");
 		const log = new StepLog(p, ["hunter2"]);
 		log.add({ at: 10_500, tool: "click", x: 1, y: 2, label: "Click" });
 		log.add({ at: 14_210, tool: "type", label: "Type hunter2", criterion: "C1" });
@@ -18,7 +18,7 @@ describe("StepLog", () => {
 	});
 
 	it("falls back to the first step when t0 is unknown", () => {
-		const log = new StepLog(join(mkdtempSync(join(tmpdir(), "acv-steps-")), "s.jsonl"), []);
+		const log = new StepLog(join(mkdtempSync(join(tmpdir(), "witness-steps-")), "s.jsonl"), []);
 		log.add({ at: 5000, tool: "a" });
 		log.add({ at: 6500, tool: "b" });
 		expect(log.finalize(null).map((s) => s.t)).toEqual([0, 1.5]);

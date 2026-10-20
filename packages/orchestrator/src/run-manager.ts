@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { Computer, ComputerProvider } from "@acv/computer";
+import type { Computer, ComputerProvider } from "@witness/computer";
 import { redact, redactDeep } from "./redact.ts";
 
 export interface Run {
@@ -79,7 +79,7 @@ export class RunManager {
 			process.off("SIGINT", onSignal);
 			process.off("SIGTERM", onSignal);
 			if (opts.keep) {
-				run.log("computer.kept", { id: computer.id.slice(0, 12), hint: `docker rm -f $(docker ps -aq --filter label=acv.run=${run.id})` });
+				run.log("computer.kept", { id: computer.id.slice(0, 12), hint: `docker rm -f $(docker ps -aq --filter label=witness.run=${run.id})` });
 			} else {
 				const s = Date.now();
 				await computer.destroy();

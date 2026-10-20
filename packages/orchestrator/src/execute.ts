@@ -5,7 +5,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Action, Computer, ConsoleMessage, NetworkEvent, PageElement, Screenshot } from "@acv/computer";
+import type { Action, Computer, ConsoleMessage, NetworkEvent, PageElement, Screenshot } from "@witness/computer";
 import { BudgetExceeded, type Model } from "./model.ts";
 import type { Criterion, Plan } from "./plan.ts";
 import { redact } from "./redact.ts";

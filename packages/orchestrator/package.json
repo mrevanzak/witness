@@ -1,5 +1,5 @@
 {
-  "name": "@acv/orchestrator",
+  "name": "@witness/orchestrator",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@acv/computer": "workspace:*",
+    "@witness/computer": "workspace:*",
     "@anthropic-ai/sdk": "0.135.0",
     "yaml": "2.8.1",
     "zod": "4.6.7"

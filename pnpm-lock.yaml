@@ -23,13 +23,13 @@ importers:
 
   apps/cli:
     dependencies:
-      '@acv/computer':
+      '@witness/computer':
         specifier: workspace:*
         version: link:../../packages/computer
-      '@acv/orchestrator':
+      '@witness/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator
-      '@acv/renderer':
+      '@witness/renderer':
         specifier: workspace:*
         version: link:../../packages/renderer
       tsx:
@@ -48,12 +48,12 @@ importers:
 
   packages/orchestrator:
     dependencies:
-      '@acv/computer':
-        specifier: workspace:*
-        version: link:../computer
       '@anthropic-ai/sdk':
         specifier: 0.135.0
         version: 0.135.0(zod@4.6.7)
+      '@witness/computer':
+        specifier: workspace:*
+        version: link:../computer
       yaml:
         specifier: 2.8.1
         version: 2.8.1
@@ -66,6 +66,9 @@ importers:
       '@remotion/cli':
         specifier: 4.0.532
         version: 4.0.532(postcss@8.5.31)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3)
+      '@remotion/google-fonts':
+        specifier: 4.0.532
+        version: 4.0.532(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       react:
         specifier: 19.2.0
         version: 19.2.0
@@ -671,6 +674,9 @@ packages:
 
   '@remotion/elevenlabs@4.0.532':
     resolution: {integrity: sha512-WTnWQ+obrURlIXZqKaTehd69eYwMpWLwlVv/QRnd7XKicMzhIsxw6XXK3muFXn3kyltJV6A97NTiF0g7T92TQw==}
+
+  '@remotion/google-fonts@4.0.532':
+    resolution: {integrity: sha512-zwjQ7OD4x9SFcuvf8mFXqNxcYnPULF/rWy88vNFZRMu4fMJcGu+o+9IyGMt+WdLC4gyA9VpCF+LMxK0bU23a/g==}
 
   '@remotion/licensing@4.0.532':
     resolution: {integrity: sha512-rVFt+XpEn4X5aOiy1DDCjJeUKgGey1ftYK812W8iEBZkcl6hlb1eq9SyQTIX0JlTtMzdJrev6+jLSnLCOj69OQ==}
@@ -2726,6 +2732,13 @@ snapshots:
     dependencies:
       '@remotion/captions': 4.0.532
       zod: 4.5.4
+
+  '@remotion/google-fonts@4.0.532(react-dom@19.2.0(react@19.2.0))(react@19.2.0)':
+    dependencies:
+      remotion: 4.0.532(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
+    transitivePeerDependencies:
+      - react
+      - react-dom
 
   '@remotion/licensing@4.0.532': {}
 

@@ -1,11 +1,11 @@
-// `verify drive <runDir> <command> [args]`: hand-drive a kept computer (session.json)
+// `witness drive <runDir> <command> [args]`: hand-drive a kept computer (session.json)
 // while exploring an app before writing a walkthrough. Prints JSON; screenshots go
 // to <runDir>/explore/NN.png (downscaled) so a session can look at them.
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { ControlClient } from "@acv/computer";
+import { ControlClient } from "@witness/computer";
 
-const HELP = `verify drive <runDir> <command>
+const HELP = `witness drive <runDir> <command>
   shot                       screenshot -> explore/NN.png (1280 wide)
   snapshot                   visible text + interactive elements (screen px)
   click <x> <y>              left click (screen px, 1920x1080)

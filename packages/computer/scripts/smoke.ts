@@ -14,7 +14,7 @@ const fail = (msg: string): never => {
 };
 const ms = (t: number) => `${(performance.now() - t).toFixed(0)} ms`;
 
-const page = `<!doctype html><title>acv smoke</title>
+const page = `<!doctype html><title>witness smoke</title>
 <style>body{font:24px system-ui;display:grid;place-items:center;height:100vh;margin:0;background:#f4f4f6}
 button{font:inherit;padding:16px 32px;border-radius:12px;border:0;background:#4f46e5;color:#fff}</style>
 <main><h1 id="status">Not clicked</h1><button id="go" onclick="document.getElementById('status').textContent='Clicked!'">Click me</button></main>`;
@@ -55,8 +55,8 @@ try {
 	await computer.destroy();
 	const took = performance.now() - t;
 	console.log(`destroyed in ${took.toFixed(0)} ms`);
-	const left = await provider.docker.listContainers({ all: true, filters: { label: [`acv.run=${runId}`] } });
-	const nets = await provider.docker.listNetworks({ filters: { label: [`acv.run=${runId}`] } });
+	const left = await provider.docker.listContainers({ all: true, filters: { label: [`witness.run=${runId}`] } });
+	const nets = await provider.docker.listNetworks({ filters: { label: [`witness.run=${runId}`] } });
 	if (left.length || nets.length) fail(`left behind ${left.length} containers, ${nets.length} networks`);
 	if (took > 3000) fail(`stop took ${took.toFixed(0)} ms (> 3 s)`);
 }

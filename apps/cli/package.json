@@ -1,15 +1,15 @@
 {
-  "name": "@acv/cli",
+  "name": "@witness/cli",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "verify": "./bin/verify.mjs"
+    "witness": "./bin/witness.mjs"
   },
   "dependencies": {
-    "@acv/computer": "workspace:*",
-    "@acv/orchestrator": "workspace:*",
+    "@witness/computer": "workspace:*",
+    "@witness/orchestrator": "workspace:*",
     "tsx": "4.23.15",
-    "@acv/renderer": "workspace:*"
+    "@witness/renderer": "workspace:*"
   }
 }

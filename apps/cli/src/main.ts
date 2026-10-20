@@ -1,28 +1,28 @@
-// verify run --repo . --ref HEAD --task "..."
-// verify cleanup
+// witness run --repo . --ref HEAD --task "..."
+// witness cleanup
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { DockerComputerProvider } from "@acv/computer";
-import { renderRun } from "@acv/renderer";
+import { DockerComputerProvider } from "@witness/computer";
+import { renderRun } from "@witness/renderer";
 import { drive } from "./drive.ts";
 import { publish } from "./publish.ts";
-import { EXIT_CODES, writeComparisonReport, writeReport, verifierAgent, verify, walkthroughAgent, type Walkthrough } from "@acv/orchestrator";
+import { EXIT_CODES, writeComparisonReport, writeReport, verifierAgent, verify, walkthroughAgent, type Walkthrough } from "@witness/orchestrator";
 
 const USAGE = `Usage:
-  verify run --repo <dir> [--ref HEAD] [--base <ref>] (--task "<text>" | --task-file <path>)
-             [--config verify.yaml] [--walkthrough script.ts] [--memory-gb 4] [--cpus 2]
+  witness run --repo <dir> [--ref HEAD] [--base <ref>] (--task "<text>" | --task-file <path>)
+             [--config witness.yaml] [--walkthrough script.ts] [--memory-gb 4] [--cpus 2]
              [--boot-only] [--keep] [--vnc] [--runs-dir ./runs]
 
-  --config       verify.yaml outside the repo (for repos without one); may stage host files and secret env
+  --config       witness.yaml outside the repo (for repos without one); may stage host files and secret env
   --walkthrough  in-session mode: a script (default export (ctx) => ...) drives the app instead of the model
-  verify render <runDir>    polished.mp4 + preview.gif from a finished run
-  verify report <runDir>    report.md ("## Manual verification") from a finished run
-  verify report --compare <beforeRun> <afterRun> --out <dir>   before/after report bundle
-  verify drive <runDir> …   hand-drive a kept computer (see \`verify drive\`)
-  verify publish --pr N --report <report.md> [--mode auto|description|comment] [--ego-space id] [--dry-run]
-  verify cleanup            remove computers/networks left by crashed runs
+  witness render <runDir> [--label after]   polished.mp4 + preview.gif from a finished run
+  witness report <runDir>    report.md ("## Manual verification") from a finished run
+  witness report --compare <beforeRun> <afterRun> --out <dir>   before/after report bundle
+  witness drive <runDir> …   hand-drive a kept computer (see \`witness drive\`)
+  witness publish --pr N --report <report.md> [--mode auto|description|comment] [--ego-space id] [--dry-run]
+  witness cleanup            remove computers/networks left by crashed runs
 
 Exit codes: 0 pass, 1 fail, 2 blocked, 3 error.`;
 
@@ -33,7 +33,8 @@ async function main(argv: string[]): Promise<number> {
 	if (cmd === "drive") return drive(rest);
 	if (cmd === "publish") return publish(rest);
 	if (cmd === "render") {
-		const r = await renderRun(rest[0]!, { onProgress: (l) => process.stderr.write(`\r${l.slice(0, 80).padEnd(80)}`) });
+		const label = rest.includes("--label") ? rest[rest.indexOf("--label") + 1] : undefined;
+		const r = await renderRun(rest[0]!, { label, onProgress: (l) => process.stderr.write(`\r${l.slice(0, 80).padEnd(80)}`) });
 		console.error("");
 		console.log(`${r.polished} (${r.durationSec.toFixed(1)} s)\n${r.gif}`);
 		return 0;
@@ -42,7 +43,7 @@ async function main(argv: string[]): Promise<number> {
 		if (rest[0] === "--compare") {
 			const { values } = parseArgs({ args: rest.slice(3), options: { out: { type: "string" }, preview: { type: "string" }, intro: { type: "string" } } });
 			if (!rest[1] || !rest[2] || !values.out) {
-				console.error("usage: verify report --compare <beforeRunDir> <afterRunDir> --out <dir> [--preview text] [--intro text]");
+				console.error("usage: witness report --compare <beforeRunDir> <afterRunDir> --out <dir> [--preview text] [--intro text]");
 				return 3;
 			}
 			console.log(writeComparisonReport({ before: rest[1], after: rest[2], outDir: values.out, preview: values.preview, intro: values.intro }));

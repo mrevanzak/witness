@@ -6,9 +6,9 @@ import Docker from "dockerode";
 import { ControlClient } from "./control-client.ts";
 import type { Computer, ComputerProvider, ComputerSpec, ServiceSpec } from "./types.ts";
 
-export const DEFAULT_IMAGE = "acv-computer:dev";
-const LABEL = "acv.run";
-const LABEL_ROLE = "acv.role";
+export const DEFAULT_IMAGE = "witness-computer:dev";
+const LABEL = "witness.run";
+const LABEL_ROLE = "witness.role";
 const GB = 1024 ** 3;
 
 /**
@@ -42,7 +42,7 @@ export class DockerComputerProvider implements ComputerProvider {
 
 	constructor(opts: DockerProviderOptions = {}) {
 		this.docker = opts.docker ?? dockerFromEnv();
-		this.image = opts.image ?? process.env.ACV_COMPUTER_IMAGE ?? DEFAULT_IMAGE;
+		this.image = opts.image ?? process.env.WITNESS_COMPUTER_IMAGE ?? DEFAULT_IMAGE;
 		this.memory = opts.memoryBytes ?? 4 * GB;
 		this.cpus = opts.cpus ?? 2;
 	}
@@ -58,7 +58,7 @@ export class DockerComputerProvider implements ComputerProvider {
 		chmodSync(artifactsDir, 0o777);
 
 		const labels = { [LABEL]: spec.runId };
-		const networkName = `acv-${spec.runId}`;
+		const networkName = `witness-${spec.runId}`;
 		await this.docker.createNetwork({ Name: networkName, Driver: "bridge", Labels: labels, CheckDuplicate: true });
 		const token = randomBytes(24).toString("base64url");
 		const ports: Record<string, Array<{ HostIp: string; HostPort: string }>> = {
@@ -68,7 +68,7 @@ export class DockerComputerProvider implements ComputerProvider {
 
 		try {
 			const container = await this.docker.createContainer({
-				name: `acv-${spec.runId}-computer`,
+				name: `witness-${spec.runId}-computer`,
 				Image: image,
 				Hostname: "computer",
 				Labels: { ...labels, [LABEL_ROLE]: "computer" },
@@ -174,7 +174,7 @@ class DockerComputer implements Computer {
 	async startService(name: string, spec: ServiceSpec): Promise<void> {
 		await pullIfMissing(this.docker, spec.image);
 		const c = await this.docker.createContainer({
-			name: `acv-${this.runId}-${name}`,
+			name: `witness-${this.runId}-${name}`,
 			Image: spec.image,
 			Labels: { [LABEL]: this.runId, [LABEL_ROLE]: `service:${name}` },
 			Env: Object.entries(spec.env ?? {}).map(([k, v]) => `${k}=${v}`),

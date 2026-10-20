@@ -9,7 +9,7 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="${1:-$SRC/../../runs/fixtures/todo-app}"
 rm -rf "$DEST" && mkdir -p "$DEST"
 DEST="$(cd "$DEST" && pwd)"
-cp -R "$SRC"/{package.json,verify.yaml,server.mjs,public} "$DEST/"
+cp -R "$SRC"/{package.json,witness.yaml,server.mjs,public} "$DEST/"
 cd "$DEST"
 g() { git -c user.name=fixture -c user.email=fixture@example.com -c commit.gpgsign=false "$@"; }
 g init -q -b main

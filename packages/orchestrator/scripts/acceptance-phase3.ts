@@ -4,7 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { DockerComputerProvider } from "@acv/computer";
+import { DockerComputerProvider } from "@witness/computer";
 import { verifierAgent, verify, type Verdict } from "../src/index.ts";
 
 const N = Number(process.argv[2] ?? 5);

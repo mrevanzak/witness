@@ -1,11 +1,11 @@
-// Walkthrough for `verify run --walkthrough <this file>`. Copy it next to the run's
+// Walkthrough for `witness run --walkthrough <this file>`. Copy it next to the run's
 // task file, then replace the criteria and steps with the path you explored.
 // Coordinates are screen pixels (1920x1080); prefer clickText / findElement.
-import type { Walkthrough } from "@acv/orchestrator";
+import type { Walkthrough } from "@witness/orchestrator";
 
 const walkthrough: Walkthrough = async (w) => {
 	const origin = new URL(w.cfg.url).origin;
-	w.preview(`production build of \`${w.change.repo.sha.slice(0, 7)}\` in a fresh ai-change-verifier computer, at \`${w.cfg.url}\`.`);
+	w.preview(`production build of \`${w.change.repo.sha.slice(0, 7)}\` in a fresh witness computer, at \`${w.cfg.url}\`.`);
 	w.intro("Fresh browser profile; seeded test data.");
 
 	w.criterion("C1", "feature", "What the change should now do, phrased as pass/fail");

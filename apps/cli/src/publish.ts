@@ -1,10 +1,10 @@
-// `verify publish --pr <N> --report <report.md> [--repo dir] [--mode auto|description|comment] [--ego-space <id>] [--dry-run]`
+// `witness publish --pr <N> --report <report.md> [--repo dir] [--mode auto|description|comment] [--ego-space <id>] [--dry-run]`
 // Port of the moumint prototype's post-evidence.sh:
 //   1. upload every ./file the report references through the PR's comment box in Ego
 //      (infra/publish/github-upload.mjs) -> GitHub user-attachments URLs
 //   2. swap the ./paths for those URLs
 //   3. PR by the current gh user -> section in the description between
-//      <!-- ai-change-verifier:start/end --> (replaced on re-runs, inserted above bot
+//      <!-- witness:start/end --> (replaced on re-runs, inserted above bot
 //      footers); someone else's PR -> a new comment.
 // --dry-run stops after writing the final markdown (no upload, no GitHub writes).
 import { execFileSync, spawnSync } from "node:child_process";
@@ -13,8 +13,8 @@ import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 const UPLOADER = resolve(import.meta.dirname, "../../../infra/publish/github-upload.mjs");
-export const START = "<!-- ai-change-verifier:start -->";
-export const END = "<!-- ai-change-verifier:end -->";
+export const START = "<!-- witness:start -->";
+export const END = "<!-- witness:end -->";
 const MEDIA = /\.\/[A-Za-z0-9._\/-]+\.(?:jpe?g|png|gif|mp4|mov|webm)/g;
 
 /** Inserts or replaces the marked section in a PR body. Pure. */
@@ -48,7 +48,7 @@ export async function publish(argv: string[]): Promise<number> {
 		},
 	});
 	if (!values.pr || !values.report) {
-		console.error("usage: verify publish --pr <N> --report <report.md> [--repo dir] [--mode auto|description|comment] [--ego-space id] [--dry-run]");
+		console.error("usage: witness publish --pr <N> --report <report.md> [--repo dir] [--mode auto|description|comment] [--ego-space id] [--dry-run]");
 		return 3;
 	}
 	const repo = resolve(values.repo);

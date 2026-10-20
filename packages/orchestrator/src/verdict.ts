@@ -2,7 +2,7 @@
 // the evidence (final screenshot, step captions, console/network errors, app log)
 // and writes the explanation. The overall verdict is computed by code.
 import { z } from "zod";
-import type { ConsoleMessage, NetworkEvent } from "@acv/computer";
+import type { ConsoleMessage, NetworkEvent } from "@witness/computer";
 import type { CriterionResult, ExecuteResult } from "./execute.ts";
 import type { Model } from "./model.ts";
 import type { Plan } from "./plan.ts";

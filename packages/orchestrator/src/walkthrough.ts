@@ -3,7 +3,7 @@
 // Same recording, step log, evidence, verdict and polished video as the agent.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ConsoleMessage, NetworkEvent, PageElement } from "@acv/computer";
+import type { ConsoleMessage, NetworkEvent, PageElement } from "@witness/computer";
 import type { CriterionResult, ExecuteResult } from "./execute.ts";
 import type { Model } from "./model.ts";
 import type { Plan } from "./plan.ts";
@@ -68,7 +68,7 @@ const { chromium } = require("/opt/control/node_modules/playwright-core");
 	for (const p of [...pages].reverse()) {
 		if ((await p.evaluate(() => document.visibilityState).catch(() => "hidden")) === "visible") { page = p; break; }
 	}
-	const value = await page.evaluate(process.env.ACV_EXPR);
+	const value = await page.evaluate(process.env.WITNESS_EXPR);
 	process.stdout.write(JSON.stringify(value === undefined ? null : value));
 	process.exit(0);
 })().catch((e) => { process.stderr.write(String(e && e.stack || e)); process.exit(1); });
@@ -168,7 +168,7 @@ export function walkthroughAgent(fn: Walkthrough, opts: { title?: string } = {})
 				if (label) steps.add({ at: s.actionAt ?? s.at, tool: "wait", label, criterion: active });
 			},
 			async evaluate<T>(expression: string) {
-				const r = await computer.exec({ cmd: `node -e '${EVAL_JS.replace(/'/g, `'\\''`)}'`, env: { ACV_EXPR: expression }, timeoutMs: 30_000 });
+				const r = await computer.exec({ cmd: `node -e '${EVAL_JS.replace(/'/g, `'\\''`)}'`, env: { WITNESS_EXPR: expression }, timeoutMs: 30_000 });
 				if (r.code !== 0) throw new Error(`evaluate failed: ${r.stderr.slice(0, 1000)}`);
 				return JSON.parse(r.stdout || "null") as T;
 			},

@@ -1,7 +1,7 @@
 import { parse } from "yaml";
-import type { ServiceSpec } from "@acv/computer";
+import type { ServiceSpec } from "@witness/computer";
 
-/** `verify.yaml` at the repo root: how to set up, start and reach the app under test. */
+/** `witness.yaml` at the repo root: how to set up, start and reach the app under test. */
 export interface VerifyConfig {
 	setup: string[];
 	start: string;
@@ -62,9 +62,9 @@ export function parseVerifyConfig(text: string): VerifyConfig {
 	try {
 		raw = parse(text);
 	} catch (e) {
-		throw new ConfigError(`verify.yaml is not valid YAML: ${(e as Error).message}`);
+		throw new ConfigError(`witness.yaml is not valid YAML: ${(e as Error).message}`);
 	}
-	if (raw == null || typeof raw !== "object" || Array.isArray(raw)) throw new ConfigError("verify.yaml must be a map");
+	if (raw == null || typeof raw !== "object" || Array.isArray(raw)) throw new ConfigError("witness.yaml must be a map");
 	const r = raw as Record<string, unknown>;
 	const known = new Set(["setup", "start", "url", "health", "services", "env", "login", "timeouts", "files", "secret_env"]);
 	for (const k of Object.keys(r)) if (!known.has(k)) throw new ConfigError(`unknown key: ${k}`);

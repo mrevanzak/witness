@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { z } from "zod";
-import { DockerComputerProvider } from "@acv/computer";
+import { DockerComputerProvider } from "@witness/computer";
 import { verifierAgent, verify, type Model, type ModelMessage, type ModelRequest, type Plan } from "../src/index.ts";
 
 const PLAN: Plan = {

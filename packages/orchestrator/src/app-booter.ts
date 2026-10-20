@@ -1,4 +1,4 @@
-import type { Computer } from "@acv/computer";
+import type { Computer } from "@witness/computer";
 import { chownTar } from "./tar.ts";
 import type { Run } from "./run-manager.ts";
 import type { VerifyConfig } from "./verify-config.ts";

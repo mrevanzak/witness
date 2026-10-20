@@ -8,7 +8,7 @@ import { checksum, chownTar, makeTar, tarEntries } from "../src/tar.ts";
 const QA = { uid: 1000, gid: 1000, user: "qa", group: "qa" };
 
 function gitArchive(): Buffer {
-	const dir = mkdtempSync(join(tmpdir(), "acv-tar-"));
+	const dir = mkdtempSync(join(tmpdir(), "witness-tar-"));
 	const g = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd: dir });
 	g("init", "-q");
 	writeFileSync(join(dir, "a.txt"), "hello\n");

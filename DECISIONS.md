@@ -7,7 +7,7 @@ Choices made where the handover left room. Newest last.
 1. **Host:** macOS with OrbStack (arm64). Bridge IPs are not reachable from macOS, so the control server's port 7070 is published on host loopback with an ephemeral port (`127.0.0.1:<random>`) and protected by a per-run bearer token. Inside the run network it is still `computer:7070`.
 2. **First stack:** moumint (Next.js + Strapi + Supabase), using the knowledge in `moumint-monorepo/.agents/verification-e2e-pr/` (the Claude-Code-driven prototype). The demo `examples/todo-app` comes first.
 3. **API key:** not set yet; needed from Phase 3.
-4. **Trigger:** a Claude Code skill (`skills/verify-change`) plus the CLI. The skill has two modes: `independent` (default; runs this verifier's own agent loop in Docker) and `in-session` (the Claude Code session drives the browser itself, like the prototype) for when Docker or an API key is unavailable. Both publish to the PR **description** between `<!-- ai-change-verifier:start/end -->` markers when the PR is the current user's, otherwise as a comment.
+4. **Trigger:** a Claude Code skill (`skills/witness`) plus the CLI. The skill has two modes: `independent` (default; runs this verifier's own agent loop in Docker) and `in-session` (the Claude Code session drives the browser itself, like the prototype) for when Docker or an API key is unavailable. Both publish to the PR **description** between `<!-- witness:start/end -->` markers when the PR is the current user's, otherwise as a comment.
 5. **Media hosting:** GitHub `user-attachments` through the PR comment box in Ego (the prototype's `github-upload.mjs`) when run from the skill on a dev machine; in a GitHub Action, the GIF/video go up as a workflow artifact linked from the description.
 6. **Video frame:** the real Chromium window chrome (tabs + address bar) is recorded and kept in the polished video.
 
@@ -18,7 +18,7 @@ Choices made where the handover left room. Newest last.
 - **Chromium runs with `--no-sandbox --test-type`.** With `CapDrop ALL` + `no-new-privileges` Chromium cannot build its own sandbox; the container is the sandbox. `--test-type` hides the "unsupported flag" infobar so it does not show in videos.
 - **`t0` from `-copyts`.** x11grab stamps frames with wall-clock time; `-copyts` keeps it in `raw.mkv`, and the first packet's pts is the exact capture time of the first frame (typically 200–700 ms after ffmpeg spawns). The `.mp4` remux drops the offset (starts at 0). Steps store absolute `at` (computer clock) and `t = (at - t0) / 1000` is computed when the recording stops. Side effect: `raw.mkv` reports an epoch-sized start time in players; `raw.mp4` is the artifact to watch.
 - **Screen coordinates for DOM elements** come from `window.screenX + (outerWidth - innerWidth)/2` and `screenY + (outerHeight - innerHeight)` (Chromium's tab strip + toolbar height, 87 px at 1080p). Assumes devicePixelRatio 1, which Xvfb gives.
-- **Page snapshot refs** index `window.__acvRefs` in the page (no DOM attributes added), valid until the next snapshot.
+- **Page snapshot refs** index `window.__witnessRefs` in the page (no DOM attributes added), valid until the next snapshot.
 - **`/screenshot` and `/act` return `image/png`** with metadata in headers (`x-cursor-x/y`, `x-at`, `x-action-at`), not base64 JSON.
 - **`host.docker.internal:host-gateway`** is added to the computer so a host-only dev stack (local Supabase) can be reached, as the prototype needed.
 - **No CJK fonts** in the image (`fonts-noto-cjk` adds ~100 MB). Add it if a target app needs it.
@@ -32,11 +32,11 @@ Choices made where the handover left room. Newest last.
 - **Setup output goes to `/artifacts/setup.log`**, app output to `/artifacts/app.log`. Boot failures (`upload`, `services`, `setup`, `start`, `health`) are a `blocked` verdict with reason `app_failed_to_boot` and the log tail; the CLI exits 2.
 - **`--task noop` (or `--boot-only`)** boots, screenshots `booted.png`, and tears down without a verdict.
 - **The control token is stripped from the env of the app and Chromium.** The app runs as the same uid as the control server, so a hostile app could still read it from `/proc`; the token guards the published port and the run network, not the computer from itself.
-- **CLI runs TypeScript through tsx** (`apps/cli/bin/verify.mjs`); no build step.
+- **CLI runs TypeScript through tsx** (`apps/cli/bin/witness.mjs`); no build step.
 
 ## Phase 3
 
-- **Model:** `claude-opus-5-5` (override with `ACV_MODEL`), adaptive thinking (always on for this model), effort `high` for plan and review, `medium` for the execution loop. Server-side refusal fallback on (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`; `ACV_FALLBACKS=0` turns it off). Cost cap per run `ACV_MAX_USD` (default $5), tracked from `usage` at list prices; `usage.json` per run.
+- **Model:** `claude-opus-5-5` (override with `WITNESS_MODEL`), adaptive thinking (always on for this model), effort `high` for plan and review, `medium` for the execution loop. Server-side refusal fallback on (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`; `WITNESS_FALLBACKS=0` turns it off). Cost cap per run `WITNESS_MAX_USD` (default $5), tracked from `usage` at list prices; `usage.json` per run.
 - **Custom tools, not Anthropic's computer toolset.** We already own the screen, the coordinate mapping and the step log; custom strict tools let us add `page_snapshot`/`click_element`, `begin/end_criterion`, `type_secret` and read-only log tools, and nothing that edits code or runs a shell.
 - **The model sees 1280×720 JPEGs** of the 1920×1080 screen; coordinates are scaled ×1.5 on the way in and out. Evidence stills are full-res PNGs. Only the last visible action in a turn returns an image.
 - **Append-only history** (required by preserved thinking on this model), with server-side context editing (`clear_tool_uses_20250919`, trigger 60k input tokens, keep 8 tool uses, never clearing `begin/end_criterion`) instead of trimming old screenshots ourselves, plus top-level prompt caching.

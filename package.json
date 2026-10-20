@@ -1,5 +1,5 @@
 {
-  "name": "ai-change-verifier",
+  "name": "witness",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.34.1",
@@ -7,9 +7,9 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "image:build": "docker build -t acv-computer:dev infra/computer",
+    "image:build": "docker build -t witness-computer:dev infra/computer",
     "verify:smoke": "tsx packages/computer/scripts/smoke.ts",
-    "verify": "tsx apps/cli/src/main.ts",
+    "witness": "tsx apps/cli/src/main.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json && tsc -p packages/renderer/remotion/tsconfig.json",
     "e2e:scripted": "tsx packages/orchestrator/scripts/scripted-e2e.ts",

@@ -61,10 +61,10 @@ export class ClaudeModel implements Model {
 	private readonly betas: string[];
 
 	constructor(opts: ClaudeModelOptions = {}) {
-		this.id = opts.model ?? process.env.ACV_MODEL ?? "claude-opus-5-5";
+		this.id = opts.model ?? process.env.WITNESS_MODEL ?? "claude-opus-5-5";
 		this.client = opts.client ?? new Anthropic({ maxRetries: 4 });
-		this.maxUsd = opts.maxUsd ?? Number(process.env.ACV_MAX_USD ?? 5);
-		this.fallbacks = opts.fallbacks ?? process.env.ACV_FALLBACKS !== "0";
+		this.maxUsd = opts.maxUsd ?? Number(process.env.WITNESS_MAX_USD ?? 5);
+		this.fallbacks = opts.fallbacks ?? process.env.WITNESS_FALLBACKS !== "0";
 		this.betas = opts.betas ?? [];
 	}
 

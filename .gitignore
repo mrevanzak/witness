@@ -10,3 +10,7 @@ out/
 
 # staged local secrets
 examples/*/sb.env
+
+# Employer-specific / third-party material kept local, out of this repo
+examples/moumint/
+infra/publish/

@@ -35,7 +35,7 @@ export function sectionMarkdown(s: ReportSection): string {
 	const p = s.mediaPrefix ?? "";
 	const out: string[] = [];
 	if (walk?.preview) out.push(`Preview: ${walk.preview}`);
-	else out.push(`Preview: production build of \`${String(run.sha ?? "").slice(0, 7)}\` in a fresh ai-change-verifier computer (run \`${run.id ?? ""}\`).`);
+	else out.push(`Preview: production build of \`${String(run.sha ?? "").slice(0, 7)}\` in a fresh witness computer (run \`${run.id ?? ""}\`).`);
 	if (walk?.intro) out.push(walk.intro);
 	const stills = walk?.stills.length
 		? walk.stills.map((x) => ({ file: x.file, caption: x.caption }))
