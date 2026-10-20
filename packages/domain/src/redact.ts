@@ -1,5 +1,12 @@
 const MASK = "[redacted]"
 
+/** The message of anything thrown or failed with. */
+export const messageOf = (e: unknown): string =>
+	e && typeof e === "object" && "message" in e && typeof e.message === "string" ? e.message : String(e)
+
+/** A secret shorter than this is not masked: it would match all over ordinary text. */
+export const isRedactable = (secret: string): boolean => secret.length >= 3
+
 /** Replaces every occurrence of each secret (and its URL-encoded form) with a mask. Pure. */
 export function redact(text: string, secrets: readonly string[]): string {
 	let out = text

@@ -20,4 +20,7 @@ export function aggregateOverall(criteria: ReadonlyArray<{ readonly status: Crit
 	return "pass"
 }
 
+/** Exit codes: a verdict's, then the CLI used wrongly, then anything else that stopped a command. */
 export const EXIT_CODES: Record<CriterionStatus, number> = { blocked: 2, fail: 1, pass: 0 }
+export const EXIT_USAGE = 3
+export const EXIT_ERROR = 4

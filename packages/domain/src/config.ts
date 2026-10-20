@@ -1,6 +1,7 @@
 // `witness.yaml`: how to set up, start and reach the app under test.
 import { Effect, Option, Schema, SchemaTransformation } from "effect"
 import { parse } from "yaml"
+import { isRedactable, messageOf } from "./redact.ts"
 
 const NonEmpty = Schema.Trimmed.pipe(Schema.check(Schema.isNonEmpty()))
 
@@ -87,6 +88,9 @@ const ConfigFile = Schema.Struct({
 	url: HttpUrl,
 })
 
+/** witness.yaml as written (before defaults), e.g. for drafting one. */
+export type WitnessConfigFile = typeof ConfigFile.Encoded
+
 /** The decoded config (camelCase, defaults applied, optional parts as `Option`). */
 export const WitnessConfig = Schema.Struct({
 	/** Zoom, pan, cursor and click ripples in the polished video. */
@@ -113,8 +117,15 @@ export type WitnessConfig = typeof WitnessConfig.Type
 export const configSecrets = (config: WitnessConfig): readonly string[] =>
 	Option.match(config.login, {
 		onNone: () => [],
-		onSome: (l) => (l.password && l.password.length >= 3 ? [l.password] : []),
+		onSome: (l) => (l.password && isRedactable(l.password) ? [l.password] : []),
 	})
+
+/**
+ * Secret env values worth redacting. Shorter values ("1", "true", "dev") are too
+ * likely to be ordinary words, and masking them would garble every log.
+ */
+export const secretEnvValues = (env: Record<string, string>): readonly string[] =>
+	Object.values(env).filter((v) => v.length >= 6)
 
 const ConfigFromFile = ConfigFile.pipe(
 	Schema.decodeTo(
@@ -169,7 +180,7 @@ export const parseWitnessConfig = Effect.fn("parseWitnessConfig")(function* (tex
 	const raw = yield* Effect.try({
 		catch: (e) =>
 			new ConfigParseError({
-				message: `witness.yaml is not valid YAML: ${e instanceof Error ? e.message : String(e)}`,
+				message: `witness.yaml is not valid YAML: ${messageOf(e)}`,
 			}),
 		try: () => parse(text) as unknown,
 	})
