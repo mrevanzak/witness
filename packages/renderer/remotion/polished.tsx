@@ -1,6 +1,8 @@
 // Witness walkthrough video: the recorded app in a hairline frame, the criteria
 // checklist filling in on the left, the current action captioned under the frame,
 // and the evidence tape (criterion segments + playhead, in source time) below it.
+// The hosted layout drops all of that and lets the app fill the frame: the report
+// page carries the criteria, and captions ship as a separate track.
 // Driven by a precomputed Timeline (src/timeline.ts).
 import { loadFont as loadMono } from "@remotion/google-fonts/IBMPlexMono"
 import { loadFont as loadSans } from "@remotion/google-fonts/IBMPlexSans"
@@ -8,6 +10,7 @@ import { AbsoluteFill, Img, interpolate, OffthreadVideo, Sequence, staticFile, u
 import { cursorAt, sourceTimeAt, type Timeline, zoomAt } from "../src/timeline"
 
 export type PolishedProps = {
+	layout?: "pr" | "hosted"
 	timeline: Timeline
 	title: string
 	video: string
@@ -117,8 +120,13 @@ function Ring({ x, y, age }: { x: number; y: number; age: number }) {
 	)
 }
 
-export const Polished: React.FC<PolishedProps> = ({ video, title, timeline: tl }) => {
+export const Polished: React.FC<PolishedProps> = ({ video, title, timeline: tl, layout = "pr" }) => {
 	const frame = useCurrentFrame()
+	const bare = layout === "hosted"
+	const frameW = bare ? 1920 : FRAME_W
+	const frameH = bare ? 1080 : FRAME_H
+	// The hosted video plays small on the page, so its in-frame labels are larger.
+	const u = bare ? 1.5 : 1
 	const { t, segment } = sourceTimeAt(tl, frame)
 	const tSrc = t ?? tl.sourceDuration
 
@@ -224,16 +232,122 @@ export const Polished: React.FC<PolishedProps> = ({ video, title, timeline: tl }
 		)
 	}
 
-	const base = FRAME_W / tl.screen.w
+	const base = frameW / tl.screen.w
 	const z = t == null ? { cx: tl.screen.w / 2, cy: tl.screen.h / 2, scale: 1 } : zoomAt(tl.zoom, t)
 	const k = base * z.scale
-	const layer = `translate(${FRAME_W / 2 - z.cx * k}px, ${FRAME_H / 2 - z.cy * k}px) scale(${k})`
+	const layer = `translate(${frameW / 2 - z.cx * k}px, ${frameH / 2 - z.cy * k}px) scale(${k})`
 	const cur = t == null ? null : cursorAt(tl.cursor, t)
 	const vis = t == null ? 0 : Math.max(0, ...tl.cursorVisible.map(([a, b]) => fade(t, a, b, 0.25)))
 	const caption = t == null || segment.kind !== "video" ? undefined : tl.captions.find((c) => within(t, c.start, c.end))
 	const freeze = segment.kind === "freeze" ? segment : null
 	const freezeAge = freeze ? (frame - freeze.from) / tl.fps : 0
+	// The PR frame has a hairline (red on a freeze); the hosted one draws its freeze border inside.
+	let outline = `0 0 0 1px ${C.hairline}`
+	if (bare) {
+		outline = "none"
+	} else if (freeze) {
+		outline = `0 0 0 1px ${C.fail}, 0 0 0 3px ${C.fail}55`
+	}
 	const tapeX = (s: number) => (Math.max(0, Math.min(s, tl.sourceDuration)) / tl.sourceDuration) * FRAME_W
+
+	const app = (
+		<div
+			style={{
+				background: C.surface,
+				borderRadius: bare ? 0 : 8,
+				boxShadow: outline,
+				height: frameH,
+				left: bare ? 0 : FRAME_X,
+				overflow: "hidden",
+				position: "absolute",
+				top: bare ? 0 : FRAME_Y,
+				width: frameW,
+			}}
+		>
+			<div
+				style={{
+					height: tl.screen.h,
+					left: 0,
+					position: "absolute",
+					top: 0,
+					transform: layer,
+					transformOrigin: "0 0",
+					width: tl.screen.w,
+				}}
+			>
+				{tl.segments.map((s) =>
+					s.kind === "video" ? (
+						<Sequence durationInFrames={s.frames} from={s.from} key={s.from} layout="none">
+							<OffthreadVideo
+								muted
+								playbackRate={s.rate}
+								src={staticFile(video)}
+								style={{ height: tl.screen.h, position: "absolute", width: tl.screen.w }}
+								trimBefore={Math.round(s.srcStart * tl.fps)}
+							/>
+						</Sequence>
+					) : null
+				)}
+				{freeze?.image ? (
+					<Img
+						src={staticFile(freeze.image)}
+						style={{ height: tl.screen.h, position: "absolute", width: tl.screen.w }}
+					/>
+				) : null}
+				{t != null && segment.kind === "video"
+					? tl.clicks
+							.filter((c) => t >= c.t && t - c.t < 0.45)
+							.map((c) => <Ring age={t - c.t} key={c.t} x={c.x} y={c.y} />)
+					: null}
+				{cur && vis > 0 && !freeze ? <Cursor opacity={vis} scale={z.scale} x={cur.x} y={cur.y} /> : null}
+			</div>
+			{segment.kind === "video" && segment.fast ? (
+				<div
+					style={{
+						background: `${C.ink}d9`,
+						border: `1px solid ${C.hairline}`,
+						borderRadius: 4,
+						color: C.paper,
+						fontFamily: MONO,
+						fontSize: 16 * u,
+						padding: `${3 * u}px ${8 * u}px`,
+						position: "absolute",
+						right: 16 * u,
+						top: 14 * u,
+					}}
+				>
+					×{Math.round(segment.rate)}
+				</div>
+			) : null}
+			{freeze ? (
+				<div
+					style={{
+						background: `${C.ink}eb`,
+						borderTop: `1px solid ${C.fail}`,
+						bottom: 0,
+						left: 0,
+						opacity: interpolate(freezeAge, [0, 0.2], [0, 1], { extrapolateRight: "clamp" }),
+						padding: `${18 * u}px ${24 * u}px`,
+						position: "absolute",
+						right: 0,
+					}}
+				>
+					<div style={{ color: C.fail, fontFamily: MONO, fontSize: 15 * u, letterSpacing: 1.5 }}>
+						FAIL · {freeze.criterion}
+					</div>
+					<div style={{ color: C.paper, fontFamily: SANS, fontSize: 24 * u, lineHeight: 1.35, marginTop: 6 * u }}>
+						{freeze.explanation}
+					</div>
+				</div>
+			) : null}
+			{bare && freeze ? (
+				<div style={{ boxShadow: `inset 0 0 0 4px ${C.fail}`, inset: 0, position: "absolute" }} />
+			) : null}
+		</div>
+	)
+	if (bare) {
+		return <AbsoluteFill style={{ background: C.ink }}>{app}</AbsoluteFill>
+	}
 
 	return (
 		<AbsoluteFill style={{ background: C.ink }}>
@@ -297,97 +411,7 @@ export const Polished: React.FC<PolishedProps> = ({ video, title, timeline: tl }
 				})}
 			</div>
 
-			{/* App frame */}
-			<div
-				style={{
-					background: C.surface,
-					borderRadius: 8,
-					boxShadow: freeze ? `0 0 0 1px ${C.fail}, 0 0 0 3px ${C.fail}55` : `0 0 0 1px ${C.hairline}`,
-					height: FRAME_H,
-					left: FRAME_X,
-					overflow: "hidden",
-					position: "absolute",
-					top: FRAME_Y,
-					width: FRAME_W,
-				}}
-			>
-				<div
-					style={{
-						height: tl.screen.h,
-						left: 0,
-						position: "absolute",
-						top: 0,
-						transform: layer,
-						transformOrigin: "0 0",
-						width: tl.screen.w,
-					}}
-				>
-					{tl.segments.map((s) =>
-						s.kind === "video" ? (
-							<Sequence durationInFrames={s.frames} from={s.from} key={s.from} layout="none">
-								<OffthreadVideo
-									muted
-									playbackRate={s.rate}
-									src={staticFile(video)}
-									style={{ height: tl.screen.h, position: "absolute", width: tl.screen.w }}
-									trimBefore={Math.round(s.srcStart * tl.fps)}
-								/>
-							</Sequence>
-						) : null
-					)}
-					{freeze?.image ? (
-						<Img
-							src={staticFile(freeze.image)}
-							style={{ height: tl.screen.h, position: "absolute", width: tl.screen.w }}
-						/>
-					) : null}
-					{t != null && segment.kind === "video"
-						? tl.clicks
-								.filter((c) => t >= c.t && t - c.t < 0.45)
-								.map((c) => <Ring age={t - c.t} key={c.t} x={c.x} y={c.y} />)
-						: null}
-					{cur && vis > 0 && !freeze ? <Cursor opacity={vis} scale={z.scale} x={cur.x} y={cur.y} /> : null}
-				</div>
-				{segment.kind === "video" && segment.fast ? (
-					<div
-						style={{
-							background: `${C.ink}d9`,
-							border: `1px solid ${C.hairline}`,
-							borderRadius: 4,
-							color: C.paper,
-							fontFamily: MONO,
-							fontSize: 16,
-							padding: "3px 8px",
-							position: "absolute",
-							right: 16,
-							top: 14,
-						}}
-					>
-						×{Math.round(segment.rate)}
-					</div>
-				) : null}
-				{freeze ? (
-					<div
-						style={{
-							background: `${C.ink}eb`,
-							borderTop: `1px solid ${C.fail}`,
-							bottom: 0,
-							left: 0,
-							opacity: interpolate(freezeAge, [0, 0.2], [0, 1], { extrapolateRight: "clamp" }),
-							padding: "18px 24px",
-							position: "absolute",
-							right: 0,
-						}}
-					>
-						<div style={{ color: C.fail, fontFamily: MONO, fontSize: 15, letterSpacing: 1.5 }}>
-							FAIL · {freeze.criterion}
-						</div>
-						<div style={{ color: C.paper, fontFamily: SANS, fontSize: 24, lineHeight: 1.35, marginTop: 6 }}>
-							{freeze.explanation}
-						</div>
-					</div>
-				) : null}
-			</div>
+			{app}
 
 			{/* Caption + timecode */}
 			<div

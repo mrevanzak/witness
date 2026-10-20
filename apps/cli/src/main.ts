@@ -2,7 +2,7 @@
 // witness: independent, recorded QA for code changes.
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { ComputerProvider, DockerComputerProvider } from "@witness/computer"
-import { EXIT_CODES } from "@witness/domain"
+import { EXIT_CODES, parseWitnessConfig, RunInfo } from "@witness/domain"
 import {
 	Git,
 	Model,
@@ -12,7 +12,7 @@ import {
 	writeComparisonReport,
 	writeReport,
 } from "@witness/orchestrator"
-import { renderRun } from "@witness/renderer"
+import { type Layout, renderRun } from "@witness/renderer"
 import { Config, Console, Effect, FileSystem, Layer, Option, Path, Schema } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 import { FetchHttpClient } from "effect/http"
@@ -190,15 +190,43 @@ const run = Command.make(
 	}, Effect.scoped)
 ).pipe(Command.withDescription("Verify a change: boot it in a fresh computer, check it, record it, write a verdict"))
 
+/** The run repo's `evidence` setting (its working-tree witness.yaml), else pr. */
+const layoutForRun = Effect.fnUntraced(function* (runDir: string) {
+	const fs = yield* FileSystem.FileSystem
+	const path = yield* Path.Path
+	const evidence = yield* fs.readFileString(path.join(runDir, "run.json")).pipe(
+		Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(RunInfo))),
+		Effect.flatMap((info) => fs.readFileString(path.join(info.repo, info.prefix, "witness.yaml"))),
+		Effect.flatMap(parseWitnessConfig),
+		Effect.map((c) => c.evidence),
+		Effect.orElseSucceed(() => Option.none<Layout>())
+	)
+	return Option.getOrElse(evidence, (): Layout => "pr")
+})
+
 const render = Command.make(
 	"render",
 	{
 		label: Flag.String("label").pipe(Flag.withDescription('Header label, e.g. "after"'), Flag.optional),
+		layout: Flag.Literals("layout", ["pr", "hosted"]).pipe(
+			Flag.withDescription(
+				"pr: criteria rail, captions and verdict card in the video. hosted: the app fills the frame, captions go to captions.vtt. Default: witness.yaml `evidence`, else pr"
+			),
+			Flag.optional
+		),
 		runDir: Argument.String("run-dir"),
 	},
-	Effect.fn(function* ({ runDir, label }) {
-		const r = yield* renderRun(runDir, Option.match(label, { onNone: () => ({}), onSome: (l) => ({ label: l }) }))
-		yield* Console.log(`${r.polished} (${r.durationSec.toFixed(1)} s)\n${r.gif}`)
+	Effect.fn(function* ({ runDir, label, layout }) {
+		const chosen = Option.isSome(layout) ? layout.value : yield* layoutForRun(runDir)
+		const r = yield* renderRun(runDir, {
+			layout: chosen,
+			...Option.match(label, { onNone: () => ({}), onSome: (l) => ({ label: l }) }),
+		})
+		yield* Console.log(
+			[`${r.polished} (${r.durationSec.toFixed(1)} s, ${r.layout} layout)`, r.gif, ...Option.toArray(r.captions)].join(
+				"\n"
+			)
+		)
 	})
 ).pipe(Command.withDescription("Render polished.mp4 and preview.gif from a finished run"))
 

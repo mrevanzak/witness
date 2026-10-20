@@ -129,7 +129,7 @@ A config passed with `--config` can also stage files from your machine into the 
 | `witness init` | draft a `witness.yaml` for an app Witness hasn't run before, and choose where evidence is published |
 | `witness run` | verify a ref: boot, check, record, write the verdict (`--session`, `--walkthrough`, `--boot-only`, `--keep`, `--no-live`) |
 | `witness act <action>` | send one recorded action to a `--session` run (`click-ref`, `type`, `begin`, `end`, `still`, `finish`, …) |
-| `witness render <run>` | render `polished.mp4` and `preview.gif` |
+| `witness render <run>` | render `polished.mp4` and `preview.gif`. With `evidence: hosted` (or `--layout hosted`) the app fills the frame and captions go to `captions.vtt`, since the report page shows the criteria |
 | `witness report <run>` | write `report.md` |
 | `witness compare <before> <after> --out <dir>` | a before/after report folder |
 | `witness upload <run> [<after-run>]` | publish a hosted report, print its URL and write `hosted-section.md` for the PR |

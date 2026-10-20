@@ -384,9 +384,11 @@ export function buildTimeline(input: {
 		})
 		frame += frames
 	}
-	const endFrames = f(o.endCardSec)
-	segments.push({ frames: endFrames, from: frame, kind: "end" })
-	frame += endFrames
+	if (o.endCardSec > 0) {
+		const endFrames = f(o.endCardSec)
+		segments.push({ frames: endFrames, from: frame, kind: "end" })
+		frame += endFrames
+	}
 
 	// Cursor: glides between focus points; visible from 0.8 s before an action until 2 s after.
 	const cursor: CursorKey[] = pts.map((p) => ({ t: p.t, x: p.x, y: p.y }))
@@ -457,4 +459,36 @@ export function outputTimeOf(tl: Timeline, srcT: number): number | null {
 		}
 	}
 	return null
+}
+
+/** Captions in output seconds, each cut off where its video stretch ends (a freeze or the end card). */
+export function captionCues(tl: Timeline): Array<{ start: number; end: number; text: string }> {
+	const breaks = tl.segments.filter((s) => s.kind !== "video").map((s) => s.from / tl.fps)
+	return tl.captions.flatMap((c) => {
+		const start = outputTimeOf(tl, c.start)
+		if (start === null) {
+			return []
+		}
+		const cut = breaks.find((b) => b > start) ?? tl.durationInFrames / tl.fps
+		const end = Math.min(outputTimeOf(tl, c.end) ?? cut, cut)
+		return end > start ? [{ end, start, text: c.text }] : []
+	})
+}
+
+const vttTime = (s: number) => {
+	const ms = Math.round(s * 1000)
+	const pad = (n: number, w = 2) => String(n).padStart(w, "0")
+	return `${pad(Math.floor(ms / 3_600_000))}:${pad(Math.floor(ms / 60_000) % 60)}:${pad(Math.floor(ms / 1000) % 60)}.${pad(ms % 1000, 3)}`
+}
+
+/** A WebVTT captions track for the hosted video. */
+export function webVtt(cues: Array<{ start: number; end: number; text: string }>): string {
+	const text = (t: string) =>
+		t
+			.replace(/\s*\n\s*/g, " ")
+			.replace(/&/g, "&amp;")
+			.replace(/</g, "&lt;")
+			.replace(/-->/g, "->")
+	const body = cues.map((c) => `${vttTime(c.start)} --> ${vttTime(c.end)}\n${text(c.text)}`)
+	return `WEBVTT\n\n${body.join("\n\n")}\n`
 }

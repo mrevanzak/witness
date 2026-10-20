@@ -74,6 +74,8 @@ Read every still and `verdict.json`. If the spec never ran a test, the run is bl
 
 ```bash
 witness render <runDir>        # polished.mp4 (<60 s, zoom, captions, verdict moments) + preview.gif
+                               # layout follows witness.yaml `evidence`: pr = criteria rail and captions in the
+                               # video; hosted = the app fills the frame, captions go to captions.vtt (--layout overrides)
 witness report <runDir>        # report.md: "## Manual verification", stills, walkthrough, notes
 ```
 

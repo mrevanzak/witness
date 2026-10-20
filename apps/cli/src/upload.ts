@@ -13,7 +13,7 @@ import {
 	Verdict,
 	WalkthroughReport,
 } from "@witness/domain"
-import { outputTimeOf, timelineForRun } from "@witness/renderer"
+import { layoutOptions, outputTimeOf, renderedLayout, timelineForRun } from "@witness/renderer"
 import { Config, Console, Effect, FileSystem, Option, Path, Redacted, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import { HttpApiClient, HttpApiMiddleware } from "effect/http-api"
@@ -107,11 +107,20 @@ const sectionFor = Effect.fn("sectionFor")(function* (runDir: string, label: str
 	const polished = path.join(runDir, "polished.mp4")
 	let video: string | undefined
 	let gif: string | undefined
+	let captions: string | undefined
 	const seek: Record<string, readonly [number, number]> = {}
 	if (yield* fs.exists(polished)) {
 		video = add("polished.mp4", `${label}-video.mp4`)
 		if (yield* fs.exists(path.join(runDir, "preview.gif"))) {
 			gif = add("preview.gif", `${label}-preview.gif`)
+		}
+		const layout = Option.getOrElse(yield* renderedLayout(runDir), () => "pr" as const)
+		if (layout === "pr") {
+			yield* Console.error(
+				`warning: ${runDir} was rendered with the PR layout (criteria rail in the video, small on the page); re-render with \`witness render --layout hosted\``
+			)
+		} else if (yield* fs.exists(path.join(runDir, "captions.vtt"))) {
+			captions = add("captions.vtt", `${label}-captions.vtt`)
 		}
 		const duration = Number(
 			(yield* spawner.string(
@@ -126,7 +135,7 @@ const sectionFor = Effect.fn("sectionFor")(function* (runDir: string, label: str
 				])
 			)).trim()
 		)
-		const timeline = yield* timelineForRun(runDir, duration)
+		const timeline = yield* timelineForRun(runDir, duration, layoutOptions(layout))
 		for (const c of verdict.value.criteria) {
 			if (Option.isNone(c.video_ts)) {
 				continue
@@ -149,6 +158,7 @@ const sectionFor = Effect.fn("sectionFor")(function* (runDir: string, label: str
 			verdict: verdict.value,
 			...(video ? { video } : {}),
 			...(gif ? { gif } : {}),
+			...(captions ? { captions } : {}),
 			seek,
 		}),
 		uploads,

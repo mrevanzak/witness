@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
 	buildTimeline,
+	captionCues,
 	clampCenter,
 	cursorAt,
 	DEFAULTS,
@@ -10,6 +11,7 @@ import {
 	pace,
 	type StepIn,
 	sourceTimeAt,
+	webVtt,
 	zoomAt,
 	zoomKeys,
 } from "../src/timeline.ts"
@@ -170,7 +172,7 @@ describe("buildTimeline", () => {
 	}
 	const last = t + 4 + 5 * 9 + 3
 	steps.push({ criterion: "C2", status: "pass", t: last, tool: "end_criterion" })
-	const tl = buildTimeline({
+	const input = {
 		criteria: [
 			{
 				description: "Empty title shows an error",
@@ -193,7 +195,8 @@ describe("buildTimeline", () => {
 		sourceDuration: last + 3,
 		steps,
 		title: "Validate empty todo titles",
-	})
+	} satisfies Parameters<typeof buildTimeline>[0]
+	const tl = buildTimeline(input)
 
 	it("fits a 2-minute run under 60 s", () => {
 		expect(tl.sourceDuration).toBeGreaterThan(110)
@@ -233,5 +236,35 @@ describe("buildTimeline", () => {
 		for (const c of tl.captions) {
 			expect(c.end).toBeGreaterThan(c.start)
 		}
+	})
+
+	it("drops the end card when endCardSec is 0 (hosted layout)", () => {
+		const bare = buildTimeline({ ...input, options: { endCardSec: 0 } })
+		expect(bare.segments.some((s) => s.kind === "end")).toBe(false)
+		const tail = bare.segments.at(-1)!
+		expect(tail.from + tail.frames).toBe(bare.durationInFrames)
+		expect(bare.durationInFrames / bare.fps).toBeLessThan(60)
+	})
+
+	it("maps captions to output time without running into a freeze", () => {
+		const cues = captionCues(tl)
+		expect(cues).toHaveLength(tl.captions.length)
+		const freezes = tl.segments.filter((s) => s.kind === "freeze")
+		for (const c of cues) {
+			expect(c.end).toBeGreaterThan(c.start)
+			for (const f of freezes) {
+				const a = f.from / tl.fps
+				expect(c.start >= a + f.frames / tl.fps || c.end <= a).toBe(true)
+			}
+		}
+		expect(cues[0]!.start).toBeCloseTo(outputTimeOf(tl, tl.captions[0]!.start)!, 5)
+	})
+})
+
+describe("webVtt", () => {
+	it("writes timestamps and escapes cue text", () => {
+		expect(webVtt([{ end: 62.5, start: 1.25, text: "Type <b> & go -->\nnow" }])).toBe(
+			"WEBVTT\n\n00:00:01.250 --> 00:01:02.500\nType &lt;b> &amp; go -> now\n"
+		)
 	})
 })

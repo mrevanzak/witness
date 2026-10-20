@@ -132,6 +132,8 @@ export class RunInfo extends Schema.Class<RunInfo>("@witness/RunInfo")({
  * run, or before/after) plus the media paths uploaded next to it.
  */
 export class ReportSection extends Schema.Class<ReportSection>("@witness/ReportSection")({
+	/** WebVTT captions for `video` (hosted-layout renders; the PR layout burns them in). */
+	captions: Schema.optionalKey(Schema.String),
 	gif: Schema.optionalKey(Schema.String),
 	label: Schema.optionalKey(Schema.String),
 	/** Per criterion: [start, end] seconds in the polished video (where its check is shown). */

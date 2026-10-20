@@ -25,10 +25,11 @@ const section = (id: string, s: ReportSection, index: number, many: boolean) => 
 	const criteria = v.criteria
 		.map((c) => {
 			const seek = s.seek[c.id]
+			const span = seek ? ` data-video="v${index}" data-start="${seek[0]}" data-end="${seek[1]}"` : ""
 			const time = seek
 				? `<button class="seek" data-video="v${index}" data-t="${seek[0]}" aria-label="Play ${esc(c.id)} at ${mmss(seek[0])}">${mmss(seek[0])}–${mmss(seek[1])}</button>`
 				: ""
-			return `<li class="crit">
+			return `<li class="crit"${span}>
 				<div class="crit-head"><span class="chip ${c.status}">${c.status}</span><span class="cid">${esc(c.id)}${c.kind === "regression" ? " · regression" : ""}</span>${time}</div>
 				<p class="cdesc">${inline(c.description)}</p>
 				<p class="cexp">${inline(c.explanation)}</p>
@@ -62,7 +63,7 @@ const section = (id: string, s: ReportSection, index: number, many: boolean) => 
 	return `<section class="run">
 		${many ? `<h2 class="run-title">${esc(s.label ?? `Run ${index + 1}`)} <span class="sha">${esc(s.sha.slice(0, 7))}</span> <span class="chip ${v.overall}">${v.overall}</span></h2>` : ""}
 		<div class="watch">
-			${s.video ? `<video id="v${index}" src="${media(s.video)}" controls preload="metadata" playsinline></video>` : `<div class="novideo">No video for this run.</div>`}
+			${s.video ? `<video id="v${index}" src="${media(s.video)}" controls preload="metadata" playsinline>${s.captions ? `<track kind="captions" src="${media(s.captions)}" srclang="en" label="Actions" default />` : ""}</video>` : `<div class="novideo">No video for this run.</div>`}
 			<div class="side"><p class="counts">${counts}</p><ol class="criteria">${criteria}</ol></div>
 		</div>
 		${stills ? `<div class="stills">${stills}</div>` : ""}
@@ -122,7 +123,9 @@ export const reportPage = (id: string, m: ReportManifest): string => {
 	.novideo { display: grid; place-items: center; color: var(--muted); font: 14px var(--mono); }
 	.counts { font: 13px var(--mono); color: var(--muted); margin: 0 0 6px; }
 	.criteria { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hairline); }
-	.crit { padding: 14px 0; border-bottom: 1px solid var(--hairline); }
+	.crit { padding: 14px 0 14px 12px; margin-left: -14px; border-left: 2px solid transparent; border-bottom: 1px solid var(--hairline); transition: border-color .2s; }
+	.crit.now { border-left-color: var(--text); }
+	.crit.now .cid { color: var(--text); }
 	.crit-head { display: flex; align-items: center; gap: 10px; }
 	.cid { font: 13px var(--mono); color: var(--muted); }
 	.chip { font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; border: 1px solid currentColor; }
@@ -144,7 +147,9 @@ export const reportPage = (id: string, m: ReportManifest): string => {
 	.notes h2 { font: 500 12px var(--mono); letter-spacing: .12em; margin: 0 0 8px; }
 	.notes li { margin: 6px 0; }
 	footer { margin-top: 56px; font: 12px var(--mono); color: var(--faint); }
-	@media (max-width: 900px) { .watch { grid-template-columns: 1fr; } .stills { grid-template-columns: 1fr; } h1 { font-size: 24px; } .verdict .word { font-size: 44px; } .wrap { padding: 0 16px 48px; } }
+	video::cue { font: 500 1em var(--sans); background: rgba(14, 15, 16, .82); }
+	@media (prefers-reduced-motion: reduce) { .crit { transition: none; } }
+	@media (max-width: 900px) { .crit { margin-left: 0; } .watch { grid-template-columns: 1fr; } .stills { grid-template-columns: 1fr; } h1 { font-size: 24px; } .verdict .word { font-size: 44px; } .wrap { padding: 0 16px 48px; } }
 </style>
 </head>
 <body>
@@ -159,6 +164,13 @@ export const reportPage = (id: string, m: ReportManifest): string => {
 	<footer>Unlisted: anyone with this link can view it. Recorded and judged by Witness.</footer>
 </div>
 <script>
+	// The criterion whose check is on screen, marked in the list beside the video.
+	for (const v of document.querySelectorAll("video")) {
+		const rows = [...document.querySelectorAll(\`.crit[data-video="\${v.id}"]\`)];
+		v.addEventListener("timeupdate", () => {
+			for (const r of rows) r.classList.toggle("now", v.currentTime >= Number(r.dataset.start) && v.currentTime <= Number(r.dataset.end));
+		});
+	}
 	for (const b of document.querySelectorAll(".seek")) {
 		b.addEventListener("click", () => {
 			const v = document.getElementById(b.dataset.video);
