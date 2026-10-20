@@ -11,6 +11,14 @@ export class RunWriteError extends Schema.TaggedError<RunWriteError>()("RunWrite
 	message: Schema.String,
 }) {}
 
+/** What a live viewer receives: run log events and steps, redacted, in order. */
+export type LiveEvent =
+	| { readonly type: "log"; readonly at: string; readonly event: string; readonly data: Record<string, unknown> }
+	| { readonly type: "step"; readonly step: Record<string, unknown> }
+
+export type Publish = (event: LiveEvent) => Effect.Effect<void>
+const noPublish: Publish = () => Effect.void
+
 export const newRunId = (now: Date): string => {
 	const ts = now.toISOString().replace(/[-:]/g, "").replace(/\..*/, "").replace("T", "-")
 	return `${ts}-${randomBytes(3).toString("hex")}`
@@ -25,6 +33,8 @@ export class CurrentRun extends Context.Service<
 		/** Bind-mounted at /artifacts in the computer (written by the untrusted side). */
 		readonly computerDir: string
 		readonly secrets: Effect.Effect<ReadonlyArray<string>>
+		/** Sends an already-redacted event to live viewers (no-op without --live). */
+		publish: Publish
 		addSecrets(values: ReadonlyArray<string>): Effect.Effect<void>
 		/** Appends a redacted event to run.log.jsonl and logs it. */
 		log(event: string, data?: Record<string, unknown>): Effect.Effect<void>
@@ -35,7 +45,7 @@ export class CurrentRun extends Context.Service<
 	}
 >()("witness/orchestrator/CurrentRun") {
 	/** A new run directory under `runsDir`. */
-	static readonly layer = (runsDir: string, id?: string) =>
+	static readonly layer = (runsDir: string, id?: string, publish: Publish = noPublish) =>
 		Layer.effect(
 			CurrentRun,
 			Effect.gen(function* () {
@@ -73,9 +83,10 @@ export class CurrentRun extends Context.Service<
 				const log = Effect.fn("CurrentRun.log")(function* (event: string, data: Record<string, unknown> = {}) {
 					const s = yield* Ref.get(secrets)
 					const at = new Date(yield* Clock.currentTimeMillis).toISOString()
-					const line = JSON.stringify(redactDeep({ at, event, ...data }, s))
-					yield* fs.writeFileString(path.join(dir, "run.log.jsonl"), `${line}\n`, { flag: "a" }).pipe(Effect.ignore)
-					yield* Effect.logInfo(event, redactDeep(data, s)).pipe(Effect.annotateLogs("run", runId))
+					const clean = redactDeep(data, s)
+					yield* fs.writeFileString(path.join(dir, "run.log.jsonl"), `${JSON.stringify({ at, event, ...clean })}\n`, { flag: "a" }).pipe(Effect.ignore)
+					yield* Effect.logInfo(event, clean).pipe(Effect.annotateLogs("run", runId))
+					yield* publish({ type: "log", at, event, data: clean })
 				})
 
 				return CurrentRun.of({
@@ -83,6 +94,7 @@ export class CurrentRun extends Context.Service<
 					dir,
 					computerDir,
 					secrets: Ref.get(secrets),
+					publish,
 					addSecrets: (values) => Ref.update(secrets, (s) => [...new Set([...s, ...values.filter((v) => v.length >= 3)])]),
 					log,
 					writeJson,

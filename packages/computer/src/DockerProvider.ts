@@ -148,7 +148,7 @@ export const DockerComputerProvider = Layer.effect(
 				runId: spec.runId,
 				network,
 				control: { url, token: Redacted.value(token) },
-				liveView: spec.enableVnc ? `http://127.0.0.1:${hostPort("6080/tcp")}/vnc.html?autoconnect=1&view_only=1&resize=scale` : undefined,
+				liveView: spec.enableVnc ? `http://127.0.0.1:${hostPort("6080/tcp")}/vnc_lite.html?view_only=true&scale=true` : undefined,
 				putArchive: (tar, destDir) => call("putArchive", () => container.putArchive(Buffer.from(tar), { path: destDir })).pipe(Effect.asVoid),
 				startService,
 			}

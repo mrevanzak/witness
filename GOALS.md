@@ -31,7 +31,7 @@ The codebase is written in Effect 4 end to end: services and layers for every bo
 - **Check:** `pnpm acceptance:phase4` passes on a failing run; `witness --help` lists every command.
 
 ### M5. Live view
-- [ ] `witness run --live` serves a local page: the computer's desktop streamed through noVNC (view only), the criteria checklist and the step log updating as they happen.
+- [x] `witness run --live` serves a local page: the computer's desktop streamed through noVNC (view only), the criteria checklist and the step log updating as they happen.
 - **Check:** during a run, the page shows the desktop moving and each step appearing within a second of it happening.
 
 ### M6. Hosted reports on Cloudflare

@@ -125,7 +125,8 @@ export const runWalkthrough = Effect.fn("runWalkthrough")(function* (computer: C
 	const service = Walkthrough.of({
 		config,
 		change,
-		criterion: (id, kind, description) => Ref.update(declared, (d) => [...d, { id, kind, description, how_to_check: "", evidence: "" }]),
+		criterion: (id, kind, description) =>
+			Ref.update(declared, (d) => [...d, { id, kind, description, how_to_check: "", evidence: "" }]).pipe(Effect.andThen(run.log("criterion.declared", { id, kind, description }))),
 		begin: Effect.fnUntraced(function* (id) {
 			const c = (yield* Ref.get(declared)).find((x) => x.id === id)
 			if (!c) return yield* new WalkthroughStepFailed({ message: `criterion ${id} not declared` })

@@ -7,7 +7,7 @@ import { BlockedVerdict, configSecrets, parseEnvFile, parseWitnessConfig, Plan, 
 import { Clock, Effect, FileSystem, Layer, Option, Path } from "effect"
 import { AppBooter } from "./AppBooter.ts"
 import type { Change } from "./Change.ts"
-import { CurrentRun } from "./CurrentRun.ts"
+import { CurrentRun, type Publish } from "./CurrentRun.ts"
 import { Executor, type ExecuteOptions } from "./Executor.ts"
 import { Git } from "./Git.ts"
 import { Model } from "./Model.ts"
@@ -101,7 +101,7 @@ const agentRun = Effect.fnUntraced(function* (computer: Computer, config: Witnes
 	yield* run.log("plan.start", { model: model.id })
 	const plan = yield* Planner.use((p) => p.plan(change, config))
 	yield* run.writeJson("plan.json", Plan, plan)
-	yield* run.log("plan.done", { criteria: plan.criteria.map((c) => `${c.id} ${c.kind}: ${c.description}`) })
+	yield* run.log("plan.done", { criteria: plan.criteria.map((c) => ({ id: c.id, kind: c.kind, description: c.description })) })
 
 	// Boot noise is not blamed on the first criterion.
 	yield* Effect.all([computer.consoleMessages, computer.networkEvents]).pipe(Effect.ignore)
@@ -148,7 +148,7 @@ export const verify = Effect.fn("verify")(function* (opts: VerifyOptions) {
 	const run = yield* CurrentRun
 
 	const repo = yield* git.resolve(opts.repo, opts.ref, opts.base)
-	yield* run.log("run.start", { repo: repo.root, prefix: repo.prefix, sha: repo.sha, base: Option.getOrNull(repo.baseSha), mode: opts.mode._tag })
+	yield* run.log("run.start", { repo: repo.root, prefix: repo.prefix, sha: repo.sha, base: Option.getOrNull(repo.baseSha), mode: opts.mode._tag, runDir: run.dir })
 	yield* run.writeJson(
 		"run.json",
 		RunInfo,
@@ -204,8 +204,8 @@ export const verify = Effect.fn("verify")(function* (opts: VerifyOptions) {
 })
 
 /** Per-run services (CurrentRun first, then what depends on it). Model is needed for agent mode. */
-export const runLayer = (runsDir: string, id?: string) => {
-	const base = Layer.mergeAll(Steps.layer, AppBooter.layer).pipe(Layer.provideMerge(CurrentRun.layer(runsDir, id)))
+export const runLayer = (runsDir: string, id?: string, publish?: Publish) => {
+	const base = Layer.mergeAll(Steps.layer, AppBooter.layer).pipe(Layer.provideMerge(CurrentRun.layer(runsDir, id, publish)))
 	return {
 		base,
 		agent: Layer.mergeAll(Planner.layer, Executor.layer, Reviewer.layer).pipe(Layer.provideMerge(base)),

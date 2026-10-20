@@ -31,6 +31,7 @@ export class Steps extends Context.Service<
 				const clean = new Step(redactDeep(input, yield* run.secrets))
 				const all = yield* Ref.updateAndGet(steps, (s) => [...s, clean])
 				yield* write(all)
+				yield* run.publish({ type: "step", step: Schema.encodeSync(Step)(clean) })
 				return clean
 			})
 

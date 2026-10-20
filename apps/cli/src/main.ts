@@ -5,12 +5,14 @@ import { ComputerProvider, DockerComputerProvider } from "@witness/computer"
 import { EXIT_CODES } from "@witness/domain"
 import { Git, Model, runLayer, verify, writeComparisonReport, writeReport, type VerifyMode, type WalkthroughProgram } from "@witness/orchestrator"
 import { renderRun } from "@witness/renderer"
-import { Console, Effect, FileSystem, Layer, Option, Path, Schema } from "effect"
+import { Config, Console, Effect, FileSystem, Layer, Option, Path, Schema } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 import { FetchHttpClient } from "effect/http"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { register } from "node:module"
 import { pathToFileURL } from "node:url"
 import { drive } from "./Drive.ts"
+import { startLive } from "./Live.ts"
 import { publish } from "./Publish.ts"
 
 /** The CLI was used wrongly (missing task, bad walkthrough file). */
@@ -42,7 +44,8 @@ const run = Command.make(
 		walkthrough: Flag.String("walkthrough").pipe(Flag.withDescription("In-session mode: an Effect program that drives the app instead of the model"), Flag.optional),
 		bootOnly: Flag.Boolean("boot-only").pipe(Flag.withDescription("Boot the app, take a screenshot, stop"), Flag.withDefault(false)),
 		keep: Flag.Boolean("keep").pipe(Flag.withDescription("Keep the computer running afterwards (see session.json)"), Flag.withDefault(false)),
-		vnc: Flag.Boolean("vnc").pipe(Flag.withDescription("Expose the noVNC live view"), Flag.withDefault(false)),
+		vnc: Flag.Boolean("vnc").pipe(Flag.withDescription("Expose the computer's noVNC endpoint"), Flag.withDefault(false)),
+		live: Flag.Boolean("live").pipe(Flag.withDescription("Open a local page that streams the desktop, criteria and steps while the run goes"), Flag.withDefault(false)),
 		memoryGb: Flag.Int("memory-gb").pipe(Flag.withDefault(4)),
 		cpus: Flag.Int("cpus").pipe(Flag.withDefault(2)),
 		runsDir: Flag.String("runs-dir").pipe(Flag.withDefault("runs")),
@@ -61,7 +64,13 @@ const run = Command.make(
 		const runsDir = path.resolve(f.runsDir)
 		yield* ComputerProvider.use((p) => p.cleanupOrphans).pipe(Effect.ignore)
 
-		const layers = runLayer(runsDir)
+		const live = f.live ? Option.some(yield* startLive()) : Option.none()
+		if (Option.isSome(live)) {
+			yield* Console.log(`live view: ${live.value.url}`)
+			const noOpen = yield* Config.Boolean("WITNESS_NO_OPEN").pipe(Config.withDefault(false))
+			if (!noOpen) yield* ChildProcessSpawner.ChildProcessSpawner.use((s) => s.exitCode(ChildProcess.make(process.platform === "darwin" ? "open" : "xdg-open", [live.value.url]))).pipe(Effect.ignore)
+		}
+		const layers = runLayer(runsDir, undefined, Option.match(live, { onNone: () => undefined, onSome: (l) => l.publish }))
 		const options = {
 			repo: f.repo,
 			ref: f.ref,
@@ -72,10 +81,10 @@ const run = Command.make(
 			configPath: f.config,
 			context: Option.none<string>(),
 			keep: f.keep,
-			enableVnc: f.vnc,
+			enableVnc: f.vnc || f.live,
 			memoryGb: f.memoryGb,
 			cpus: f.cpus,
-			onComputer: (c: { readonly liveView: string | undefined }) => (c.liveView ? Console.log(`live view: ${c.liveView}`) : Effect.void),
+			onComputer: (c: { readonly liveView: string | undefined }) => (c.liveView && !f.live ? Console.log(`desktop (noVNC): ${c.liveView}`) : Effect.void),
 		}
 		const outcome = yield* verify(options).pipe(Effect.provide(layers.agent.pipe(Layer.provideMerge(mode._tag === "Agent" ? Model.claude : Model.unavailable))))
 
@@ -94,7 +103,7 @@ const run = Command.make(
 		yield* Console.log(`run dir: ${outcome.runDir}`)
 		if (yield* fs.exists(path.join(outcome.runDir, "session.json"))) yield* Console.log(`session: ${path.join(outcome.runDir, "session.json")}`)
 		yield* setExit(Option.isSome(outcome.bootMs) ? 0 : EXIT_CODES[outcome.overall])
-	})
+	}, Effect.scoped)
 ).pipe(Command.withDescription("Verify a change: boot it in a fresh computer, check it, record it, write a verdict"))
 
 const render = Command.make(
