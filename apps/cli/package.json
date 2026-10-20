@@ -1,19 +1,58 @@
 {
-  "name": "@witness/cli",
+  "name": "@mrevanzak/witness",
   "version": "0.1.0",
-  "private": true,
+  "description": "Independent, recorded QA for code changes: boots the app in a fresh Linux desktop, checks the change, and hands back a verdict, stills and video",
+  "keywords": [
+    "qa",
+    "testing",
+    "pull-request",
+    "playwright",
+    "screen-recording",
+    "ai-agents"
+  ],
+  "homepage": "https://github.com/mrevanzak/witness#readme",
+  "bugs": "https://github.com/mrevanzak/witness/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mrevanzak/witness.git",
+    "directory": "apps/cli"
+  },
+  "license": "MIT",
   "type": "module",
   "bin": {
-    "witness": "./bin/witness.mjs"
+    "witness": "./dist/bin/witness.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsx scripts/build.ts",
+    "prepack": "npm run build"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.135.0",
     "@effect/platform-node": "4.0.5",
+    "@remotion/cli": "4.0.532",
+    "@remotion/google-fonts": "4.0.532",
+    "dockerode": "4.0.12",
+    "effect": "4.0.5",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.532",
+    "yaml": "2.8.1"
+  },
+  "devDependencies": {
     "@witness/computer": "workspace:*",
     "@witness/domain": "workspace:*",
     "@witness/orchestrator": "workspace:*",
     "@witness/renderer": "workspace:*",
-    "effect": "4.0.5",
-    "tsx": "4.23.15",
-    "yaml": "2.8.1"
+    "esbuild": "0.25.10",
+    "tsx": "4.23.15"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

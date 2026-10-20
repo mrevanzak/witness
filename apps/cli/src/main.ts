@@ -21,6 +21,7 @@ import { Argument, Command, Flag } from "effect/cli"
 import { FetchHttpClient } from "effect/http"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { drive } from "./drive.ts"
+import { buildImage } from "./image.ts"
 import { init } from "./init.ts"
 import { startLive } from "./live.ts"
 import { publish } from "./publish.ts"
@@ -459,9 +460,36 @@ const cleanup = Command.make(
 	})
 ).pipe(Command.withDescription("Remove computers and networks left by crashed runs"))
 
+const imageCmd = Command.make(
+	"image",
+	{
+		tag: Flag.String("tag").pipe(
+			Flag.withDescription("Image tag. Default: WITNESS_COMPUTER_IMAGE, else witness-computer:dev"),
+			Flag.optional
+		),
+	},
+	Effect.fn(function* (f) {
+		yield* buildImage(Option.getOrUndefined(f.tag)).pipe(
+			Effect.catchTag("ImageError", (e) => Console.error(e.message).pipe(Effect.andThen(setExit(3))))
+		)
+	})
+).pipe(Command.withDescription("Build the computer image runs boot (needs Docker)"))
+
 const witness = Command.make("witness").pipe(
 	Command.withDescription("Independent, recorded QA for code changes made by AI agents or humans"),
-	Command.withSubcommands([initCmd, run, actCmd, render, report, compare, uploadCmd, driveCmd, publishCmd, cleanup])
+	Command.withSubcommands([
+		initCmd,
+		imageCmd,
+		run,
+		actCmd,
+		render,
+		report,
+		compare,
+		uploadCmd,
+		driveCmd,
+		publishCmd,
+		cleanup,
+	])
 )
 
 const Services = Layer.mergeAll(Git.layer, DockerComputerProvider).pipe(
