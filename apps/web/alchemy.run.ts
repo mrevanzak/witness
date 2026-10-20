@@ -9,9 +9,22 @@ import * as Alchemy from "alchemy"
 import * as Cloudflare from "alchemy/Cloudflare"
 import { Config, Effect, Option } from "effect"
 
-export const Media = Cloudflare.R2.Bucket("Media")
+// Prod resources are plain `witness`; other stages get a suffix (`witness-dev`).
+// Bucket, database and Worker live in separate namespaces, so they share it.
+const resourceName = Effect.gen(function* () {
+	const stage = yield* Alchemy.Stage
+	return stage === "prod" ? "witness" : `witness-${stage}`
+})
 
-export const Db = Cloudflare.D1.Database("Db", { migrations: "./migrations" })
+export const Media = Cloudflare.R2.Bucket(
+	"Media",
+	Effect.map(resourceName, (name) => ({ name }))
+)
+
+export const Db = Cloudflare.D1.Database(
+	"Db",
+	Effect.map(resourceName, (name) => ({ migrations: "./migrations", name }))
+)
 
 export const Reports = Cloudflare.Worker(
 	"Reports",
@@ -20,6 +33,7 @@ export const Reports = Cloudflare.Worker(
 		return {
 			compatibility: { date: "2026-09-25", flags: ["nodejs_compat"] },
 			main: "./src/worker.ts",
+			name: yield* resourceName,
 			...Option.match(domain, { onNone: () => ({}), onSome: (name) => ({ domain: name }) }),
 			env: {
 				DB: Db,
