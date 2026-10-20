@@ -41,7 +41,7 @@ The codebase is written in Effect 4 end to end: services and layers for every bo
 - [ ] `witness publish` can link the hosted report instead of uploading through GitHub.
 - [x] Infrastructure in code: `apps/web/alchemy.run.ts` (Alchemy 2) declares the bucket, the database with migrations, and the Worker with its bindings and upload token.
 - [x] Report page in the Witness look (quiet neutral, IBM Plex), with clickable timestamps that seek the video.
-- **Check:** `pnpm run dev` (Alchemy) end to end locally (done: upload, page, seeking, 206 ranges, auth); then `pnpm run deploy`, and the PR #453 report opens from its URL on another device.
+- **Check:** `pnpm web:dev` (Alchemy) end to end locally (done: upload, page, seeking, 206 ranges, auth); then `pnpm web:deploy`, and the PR #453 report opens from its URL on another device.
 
 ### M7. Open-source ready
 - [x] README for a public project (what it is, why, quick start, how it works, credits), MIT license, CONTRIBUTING, CI (typecheck + unit tests), issue templates.
