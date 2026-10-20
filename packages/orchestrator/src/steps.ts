@@ -12,26 +12,27 @@ const encodeLine = Schema.encodeSync(Schema.fromJsonString(Step))
 export class Steps extends Context.Service<
 	Steps,
 	{
-		add(step: StepInput): Effect.Effect<Step, RunWriteError>
-		readonly all: Effect.Effect<ReadonlyArray<Step>>
+		add: (step: StepInput) => Effect.Effect<Step, RunWriteError>
+		readonly all: Effect.Effect<readonly Step[]>
 		/** Rewrites steps.jsonl with `t` relative to the first video frame (or the first step). */
-		finalize(t0: Option.Option<number>): Effect.Effect<ReadonlyArray<Step>, RunWriteError>
+		finalize: (t0: Option.Option<number>) => Effect.Effect<readonly Step[], RunWriteError>
 	}
 >()("witness/orchestrator/Steps") {
 	static readonly layer = Layer.effect(
 		Steps,
 		Effect.gen(function* () {
 			const run = yield* CurrentRun
-			const steps = yield* Ref.make<ReadonlyArray<Step>>([])
+			const steps = yield* Ref.make<readonly Step[]>([])
 			yield* run.writeText("steps.jsonl", "")
 
-			const write = (all: ReadonlyArray<Step>) => run.writeText("steps.jsonl", all.map((s) => encodeLine(s)).join("\n") + (all.length ? "\n" : ""))
+			const write = (all: readonly Step[]) =>
+				run.writeText("steps.jsonl", all.map((s) => encodeLine(s)).join("\n") + (all.length ? "\n" : ""))
 
 			const add = Effect.fn("Steps.add")(function* (input: StepInput) {
 				const clean = new Step(redactDeep(input, yield* run.secrets))
 				const all = yield* Ref.updateAndGet(steps, (s) => [...s, clean])
 				yield* write(all)
-				yield* run.publish({ type: "step", step: Schema.encodeSync(Step)(clean) })
+				yield* run.publish({ step: Schema.encodeSync(Step)(clean), type: "step" })
 				return clean
 			})
 

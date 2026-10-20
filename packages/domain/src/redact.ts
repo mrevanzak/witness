@@ -1,20 +1,30 @@
 const MASK = "[redacted]"
 
 /** Replaces every occurrence of each secret (and its URL-encoded form) with a mask. Pure. */
-export function redact(text: string, secrets: ReadonlyArray<string>): string {
+export function redact(text: string, secrets: readonly string[]): string {
 	let out = text
 	for (const s of secrets) {
-		if (!s) continue
-		for (const form of new Set([s, encodeURIComponent(s)])) out = out.split(form).join(MASK)
+		if (!s) {
+			continue
+		}
+		for (const form of new Set([s, encodeURIComponent(s)])) {
+			out = out.split(form).join(MASK)
+		}
 	}
 	return out
 }
 
 /** Deep-redacts string values of a JSON-able value. Pure. */
-export function redactDeep<T>(value: T, secrets: ReadonlyArray<string>): T {
-	if (secrets.length === 0) return value
-	if (typeof value === "string") return redact(value, secrets) as T
-	if (Array.isArray(value)) return value.map((v) => redactDeep(v, secrets)) as T
+export function redactDeep<T>(value: T, secrets: readonly string[]): T {
+	if (secrets.length === 0) {
+		return value
+	}
+	if (typeof value === "string") {
+		return redact(value, secrets) as T
+	}
+	if (Array.isArray(value)) {
+		return value.map((v) => redactDeep(v, secrets)) as T
+	}
 	if (value && typeof value === "object") {
 		return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactDeep(v, secrets)])) as T
 	}

@@ -1,25 +1,31 @@
 <!doctype html>
 <html lang="en">
-<head>
-	<meta charset="utf-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1" />
-	<title>Todos</title>
-	<link rel="icon" href="data:," />
-	<link rel="stylesheet" href="/style.css" />
-</head>
-<body>
-	<main>
-		<h1>Todos</h1>
-		<form id="new-todo" novalidate>
-			<div class="field">
-				<input id="title" name="title" placeholder="What needs doing?" autocomplete="off" aria-describedby="title-error" />
-				<p id="title-error" class="error" role="alert"></p>
-			</div>
-			<button type="submit">Add todo</button>
-		</form>
-		<ul id="list"></ul>
-		<p id="count"></p>
-	</main>
-	<script src="/app.js"></script>
-</body>
+	<head>
+		<meta charset="utf-8">
+		<meta content="width=device-width, initial-scale=1" name="viewport">
+		<title>Todos</title>
+		<link href="data:," rel="icon">
+		<link href="/style.css" rel="stylesheet">
+	</head>
+	<body>
+		<main>
+			<h1>Todos</h1>
+			<form id="new-todo" novalidate>
+				<div class="field">
+					<input
+						aria-describedby="title-error"
+						autocomplete="off"
+						id="title"
+						name="title"
+						placeholder="What needs doing?"
+					>
+					<p class="error" id="title-error" role="alert"></p>
+				</div>
+				<button type="submit">Add todo</button>
+			</form>
+			<ul id="list"></ul>
+			<p id="count"></p>
+		</main>
+		<script defer src="/app.js"></script>
+	</body>
 </html>

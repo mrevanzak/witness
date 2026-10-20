@@ -8,10 +8,16 @@ import type { CriterionStatus } from "./ids.ts"
  * An unverified criterion never yields pass.
  */
 export function aggregateOverall(criteria: ReadonlyArray<{ readonly status: CriterionStatus }>): CriterionStatus {
-	if (criteria.length === 0) return "blocked"
-	if (criteria.some((c) => c.status === "fail")) return "fail"
-	if (criteria.some((c) => c.status === "blocked")) return "blocked"
+	if (criteria.length === 0) {
+		return "blocked"
+	}
+	if (criteria.some((c) => c.status === "fail")) {
+		return "fail"
+	}
+	if (criteria.some((c) => c.status === "blocked")) {
+		return "blocked"
+	}
 	return "pass"
 }
 
-export const EXIT_CODES: Record<CriterionStatus, number> = { pass: 0, fail: 1, blocked: 2 }
+export const EXIT_CODES: Record<CriterionStatus, number> = { blocked: 2, fail: 1, pass: 0 }

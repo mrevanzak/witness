@@ -10,34 +10,36 @@ export class InitError extends Schema.TaggedError<InitError>()("InitError", { me
 
 export type PackageManager = "pnpm" | "yarn" | "yarn-berry" | "npm" | "bun"
 
-export interface ComposeService {
+export type ComposeService = {
+	readonly env: Record<string, string>
 	readonly image: string
 	readonly port: number | undefined
-	readonly env: Record<string, string>
 }
 
 /** What the repo tells us about how it runs. Gathered by `readFacts`, consumed by `draftConfig`. */
-export interface RepoFacts {
+export type RepoFacts = {
+	readonly compose: Record<string, ComposeService>
+	readonly deps: readonly string[]
+	readonly envExample: Record<string, string>
 	readonly packageManager: PackageManager | undefined
 	readonly scripts: Record<string, string>
-	readonly deps: ReadonlyArray<string>
-	readonly webServer: { readonly command: string; readonly url: string | undefined; readonly port: number | undefined } | undefined
-	readonly compose: Record<string, ComposeService>
-	readonly envExample: Record<string, string>
+	readonly webServer:
+		| { readonly command: string; readonly url: string | undefined; readonly port: number | undefined }
+		| undefined
 }
 
-export interface Draft {
+export type Draft = {
 	readonly config: Record<string, unknown>
 	/** What was guessed and what to check, one line each. */
-	readonly notes: ReadonlyArray<string>
+	readonly notes: readonly string[]
 }
 
 const INSTALL: Record<PackageManager, string> = {
+	bun: "bun install --frozen-lockfile",
+	npm: "npm ci",
 	pnpm: "pnpm install --frozen-lockfile",
 	yarn: "yarn install --frozen-lockfile",
 	"yarn-berry": "yarn install --immutable",
-	npm: "npm ci",
-	bun: "bun install --frozen-lockfile",
 }
 
 const runScript = (pm: PackageManager | undefined, script: string) => {
@@ -81,15 +83,17 @@ const portInUrl = (url: string): number | undefined => {
 }
 
 /** Images worth running next to the app; anything else in compose is probably the app itself. */
-const SERVICE_IMAGE = /^(?:[\w.-]+\/)*(postgres|postgis|mysql|mariadb|redis|valkey|mongo|minio|mailhog|mailpit|rabbitmq|elasticsearch|opensearch|memcached|localstack|supabase\/postgres)\b/
+const SERVICE_IMAGE =
+	/^(?:[\w.-]+\/)*(postgres|postgis|mysql|mariadb|redis|valkey|mongo|minio|mailhog|mailpit|rabbitmq|elasticsearch|opensearch|memcached|localstack|supabase\/postgres)\b/
 
 /** Turns repo facts into a witness.yaml draft. Pure. */
 export const draftConfig = (facts: RepoFacts): Draft => {
-	const notes: Array<string> = []
+	const notes: string[] = []
 	const pm = facts.packageManager
-	const setup: Array<string> = []
-	if (pm) setup.push(INSTALL[pm])
-	else if (facts.deps.length) {
+	const setup: string[] = []
+	if (pm) {
+		setup.push(INSTALL[pm])
+	} else if (facts.deps.length) {
 		setup.push("npm install")
 		notes.push("No lockfile found, so `setup` uses `npm install`; pin it to your package manager's frozen install.")
 	}
@@ -126,23 +130,42 @@ export const draftConfig = (facts: RepoFacts): Draft => {
 
 	// Database steps the repo already scripts.
 	for (const s of ["db:migrate", "migrate", "db:seed", "seed"]) {
-		if (facts.scripts[s] !== undefined) setup.push(runScript(pm, s))
+		if (facts.scripts[s] !== undefined) {
+			setup.push(runScript(pm, s))
+		}
 	}
 
 	// Services from compose. Inside a run they're reachable by service name, not localhost.
 	const services: Record<string, Record<string, unknown>> = {}
 	const hostFor = new Map<number, string>()
 	for (const [name, svc] of Object.entries(facts.compose)) {
-		if (!SERVICE_IMAGE.test(svc.image)) continue
-		const id = name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^[^a-z]+/, "").slice(0, 31) || "svc"
-		services[id] = { image: svc.image, ...(Object.keys(svc.env).length ? { env: svc.env } : {}), ...(svc.port ? { port: svc.port } : {}) }
-		if (svc.port) hostFor.set(svc.port, id)
+		if (!SERVICE_IMAGE.test(svc.image)) {
+			continue
+		}
+		const id =
+			name
+				.toLowerCase()
+				.replace(/[^a-z0-9-]/g, "-")
+				.replace(/^[^a-z]+/, "")
+				.slice(0, 31) || "svc"
+		services[id] = {
+			image: svc.image,
+			...(Object.keys(svc.env).length ? { env: svc.env } : {}),
+			...(svc.port ? { port: svc.port } : {}),
+		}
+		if (svc.port) {
+			hostFor.set(svc.port, id)
+		}
 	}
-	if (Object.keys(services).length) notes.push(`Services from docker compose: ${Object.keys(services).join(", ")}. Env pointing at localhost:<their port> now points at the service name.`)
+	if (Object.keys(services).length) {
+		notes.push(
+			`Services from docker compose: ${Object.keys(services).join(", ")}. Env pointing at localhost:<their port> now points at the service name.`
+		)
+	}
 
 	// Env from .env.example, rewired to the services. Empty values are left for you to fill.
 	const env: Record<string, string> = {}
-	const empty: Array<string> = []
+	const empty: string[] = []
 	for (const [k, v] of Object.entries(facts.envExample)) {
 		if (v === "") {
 			empty.push(k)
@@ -153,11 +176,17 @@ export const draftConfig = (facts: RepoFacts): Draft => {
 			return host ? `${host}:${p}` : all
 		})
 	}
-	if (empty.length) notes.push(`.env.example leaves these empty, so they're not set: ${empty.join(", ")}. Add test values under \`env\`, or keep secrets in a file passed as \`secret_env\` from a --config outside the repo.`)
+	if (empty.length) {
+		notes.push(
+			`.env.example leaves these empty, so they're not set: ${empty.join(", ")}. Add test values under \`env\`, or keep secrets in a file passed as \`secret_env\` from a --config outside the repo.`
+		)
+	}
 	notes.push("If the app needs a signed-in user, add `login` with a seeded test account.")
 
 	// Most Node servers read PORT; it is harmless for the ones that don't.
-	if (portInCommand(start) === undefined && env["PORT"] === undefined) env["PORT"] = String(port)
+	if (portInCommand(start) === undefined && !("PORT" in env)) {
+		env.PORT = String(port)
+	}
 
 	const url = `http://localhost:${port}`
 	const config: Record<string, unknown> = {
@@ -190,41 +219,55 @@ const LOCKFILES: ReadonlyArray<readonly [string, PackageManager]> = [
 ]
 
 const PackageJson = Schema.Struct({
-	scripts: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 	dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 	devDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 	packageManager: Schema.optionalKey(Schema.String),
+	scripts: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 })
 
 /** Reads Playwright's `webServer` out of its config source. Good enough for the common literal form. */
 export const webServerIn = (source: string): RepoFacts["webServer"] => {
 	const block = source.match(/webServer\s*:\s*\[?\s*\{([\s\S]*?)\}/)
-	if (!block) return undefined
+	if (!block) {
+		return undefined
+	}
 	const str = (key: string) => block[1]!.match(new RegExp(`${key}\\s*:\\s*(['"\`])(.*?)\\1`))?.[2]
 	const command = str("command")
-	if (!command) return undefined
+	if (!command) {
+		return undefined
+	}
 	const portLit = block[1]!.match(/port\s*:\s*(\d{2,5})/)
-	return { command, url: str("url"), port: portLit ? Number(portLit[1]) : undefined }
+	return { command, port: portLit ? Number(portLit[1]) : undefined, url: str("url") }
 }
 
 /** Reads compose services: image, first container port, environment. */
 export const composeServices = (text: string): Record<string, ComposeService> => {
-	const doc = parse(text) as { services?: Record<string, { image?: unknown; ports?: unknown; environment?: unknown }> } | null
+	const doc = parse(text) as {
+		services?: Record<string, { image?: unknown; ports?: unknown; environment?: unknown }>
+	} | null
 	const out: Record<string, ComposeService> = {}
 	for (const [name, s] of Object.entries(doc?.services ?? {})) {
-		if (typeof s?.image !== "string") continue
+		if (typeof s?.image !== "string") {
+			continue
+		}
 		const first = Array.isArray(s.ports) ? String(s.ports[0] ?? "") : ""
 		const port = Number(first.split(":").pop()?.split("/")[0]) || undefined
 		const env: Record<string, string> = {}
 		if (Array.isArray(s.environment)) {
 			for (const e of s.environment) {
 				const [k, ...v] = String(e).split("=")
-				if (k && v.length) env[k] = v.join("=")
+				if (k && v.length) {
+					env[k] = v.join("=")
+				}
 			}
 		} else if (s.environment && typeof s.environment === "object") {
-			for (const [k, v] of Object.entries(s.environment)) if (v !== null && v !== undefined) env[k] = String(v)
+			for (const [k, v] of Object.entries(s.environment)) {
+				if (v !== null && v !== undefined) {
+					env[k] = String(v)
+				}
+			}
 		}
-		out[name] = { image: s.image, port, env }
+		out[name] = { env, image: s.image, port }
 	}
 	return out
 }
@@ -234,50 +277,80 @@ export const readFacts = Effect.fn("readFacts")(function* (dir: string) {
 	const fs = yield* FileSystem.FileSystem
 	const path = yield* Path.Path
 	const read = (name: string) =>
-		fs.exists(path.join(dir, name)).pipe(Effect.flatMap((ok) => (ok ? fs.readFileString(path.join(dir, name)).pipe(Effect.map(Option.some)) : Effect.succeed(Option.none<string>()))))
-	const firstOf = (names: ReadonlyArray<string>) => Effect.findFirst(names, (n) => fs.exists(path.join(dir, n))).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.succeed(Option.none<string>()), onSome: read })))
+		fs
+			.exists(path.join(dir, name))
+			.pipe(
+				Effect.flatMap((ok) =>
+					ok
+						? fs.readFileString(path.join(dir, name)).pipe(Effect.map(Option.some))
+						: Effect.succeed(Option.none<string>())
+				)
+			)
+	const firstOf = (names: readonly string[]) =>
+		Effect.findFirst(names, (n) => fs.exists(path.join(dir, n))).pipe(
+			Effect.flatMap(Option.match({ onNone: () => Effect.succeed(Option.none<string>()), onSome: read }))
+		)
 
-	const pkg = Option.flatMap(yield* read("package.json"), (t) => Option.flatMap(Option.liftThrowable(JSON.parse)(t), Schema.decodeUnknownOption(PackageJson)))
+	const pkg = Option.flatMap(yield* read("package.json"), (t) =>
+		Option.flatMap(Option.liftThrowable(JSON.parse)(t), Schema.decodeUnknownOption(PackageJson))
+	)
 	const lockfile = yield* Effect.findFirst(LOCKFILES, ([file]) => fs.exists(path.join(dir, file)))
 	let packageManager = Option.getOrUndefined(Option.map(lockfile, ([, pm]) => pm))
-	if (packageManager === "yarn" && (yield* fs.exists(path.join(dir, ".yarnrc.yml")))) packageManager = "yarn-berry"
+	if (packageManager === "yarn" && (yield* fs.exists(path.join(dir, ".yarnrc.yml")))) {
+		packageManager = "yarn-berry"
+	}
 
 	const playwright = yield* firstOf(["playwright.config.ts", "playwright.config.js", "playwright.config.mjs"])
 	const compose = yield* firstOf(["compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"])
 	const envExample = yield* firstOf([".env.example", ".env.sample", ".env.template"])
 
 	return {
-		packageManager,
-		scripts: Option.match(pkg, { onNone: () => ({}), onSome: (p) => p.scripts ?? {} }),
-		deps: Option.match(pkg, { onNone: () => [], onSome: (p) => [...Object.keys(p.dependencies ?? {}), ...Object.keys(p.devDependencies ?? {})] }),
-		webServer: Option.match(playwright, { onNone: () => undefined, onSome: webServerIn }),
 		compose: Option.match(compose, {
 			onNone: () => ({}),
 			onSome: (t) => Option.getOrElse(Option.liftThrowable(composeServices)(t), () => ({})),
 		}),
+		deps: Option.match(pkg, {
+			onNone: () => [],
+			onSome: (p) => [...Object.keys(p.dependencies ?? {}), ...Object.keys(p.devDependencies ?? {})],
+		}),
 		envExample: Option.match(envExample, { onNone: () => ({}), onSome: parseEnvFile }),
+		packageManager,
+		scripts: Option.match(pkg, { onNone: () => ({}), onSome: (p) => p.scripts ?? {} }),
+		webServer: Option.match(playwright, { onNone: () => undefined, onSome: webServerIn }),
 	} satisfies RepoFacts
 })
 
-export const init = Effect.fn("init")(function* (o: { readonly repo: string; readonly out: Option.Option<string>; readonly force: boolean }) {
+export const init = Effect.fn("init")(function* (o: {
+	readonly repo: string
+	readonly out: Option.Option<string>
+	readonly force: boolean
+}) {
 	const fs = yield* FileSystem.FileSystem
 	const path = yield* Path.Path
 	const repo = path.resolve(o.repo)
-	if (!(yield* fs.exists(repo))) return yield* new InitError({ message: `${repo} does not exist` })
+	if (!(yield* fs.exists(repo))) {
+		return yield* new InitError({ message: `${repo} does not exist` })
+	}
 	const out = Option.match(o.out, { onNone: () => path.join(repo, "witness.yaml"), onSome: (p) => path.resolve(p) })
-	if ((yield* fs.exists(out)) && !o.force) return yield* new InitError({ message: `${out} already exists (use --force to overwrite)` })
+	if ((yield* fs.exists(out)) && !o.force) {
+		return yield* new InitError({ message: `${out} already exists (use --force to overwrite)` })
+	}
 
 	const draft = draftConfig(yield* readFacts(repo))
 	const text = renderDraft(draft)
 	// The draft must at least be a valid witness.yaml.
-	yield* parseWitnessConfig(text).pipe(Effect.mapError((e) => new InitError({ message: `draft is invalid, please report this: ${e.message}` })))
+	yield* parseWitnessConfig(text).pipe(
+		Effect.mapError((e) => new InitError({ message: `draft is invalid, please report this: ${e.message}` }))
+	)
 	yield* fs.makeDirectory(path.dirname(out), { recursive: true })
 	yield* fs.writeFileString(out, text)
 
 	const rel = path.relative(process.cwd(), out)
 	const shown = rel.startsWith("..") ? out : rel
 	yield* Console.log(`wrote ${shown}\n`)
-	for (const n of draft.notes) yield* Console.log(`- ${n}`)
+	for (const n of draft.notes) {
+		yield* Console.log(`- ${n}`)
+	}
 	yield* Console.log(`\nNext, prove it boots:\n  witness run --repo ${o.repo} --config ${shown} --boot-only`)
 	return out
 })

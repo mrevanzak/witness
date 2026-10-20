@@ -2,9 +2,10 @@
 import type { ReportManifest, ReportSection } from "@witness/domain"
 import { Option } from "effect"
 
-const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!)
+const esc = (s: string) =>
+	s.replace(/[&<>"']/g, (c) => ({ "'": "&#39;", '"': "&quot;", "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!)
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`
-const STATUS_WORD: Record<string, string> = { pass: "Pass", fail: "Fail", blocked: "Blocked" }
+const STATUS_WORD: Record<string, string> = { blocked: "Blocked", fail: "Fail", pass: "Pass" }
 
 /** `code` spans from backticks, everything else escaped. */
 const inline = (s: string) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>")
@@ -14,7 +15,13 @@ const section = (id: string, s: ReportSection, index: number, many: boolean) => 
 	const v = s.verdict
 	const failed = v.criteria.filter((c) => c.status === "fail").length
 	const blocked = v.criteria.filter((c) => c.status === "blocked").length
-	const counts = [`${v.criteria.length} criteria`, failed ? `${failed} failed` : "", blocked ? `${blocked} blocked` : ""].filter(Boolean).join(" · ")
+	const counts = [
+		`${v.criteria.length} criteria`,
+		failed ? `${failed} failed` : "",
+		blocked ? `${blocked} blocked` : "",
+	]
+		.filter(Boolean)
+		.join(" · ")
 	const criteria = v.criteria
 		.map((c) => {
 			const seek = s.seek[c.id]
@@ -29,18 +36,27 @@ const section = (id: string, s: ReportSection, index: number, many: boolean) => 
 		})
 		.join("")
 	const stills = s.stills
-		.map((st) => `<figure><a href="${media(st.file)}" target="_blank" rel="noopener"><img src="${media(st.file)}" alt="${esc(st.caption)}" loading="lazy" /></a><figcaption>${inline(st.caption)}</figcaption></figure>`)
+		.map(
+			(st) =>
+				`<figure><a href="${media(st.file)}" target="_blank" rel="noopener"><img src="${media(st.file)}" alt="${esc(st.caption)}" loading="lazy" /></a><figcaption>${inline(st.caption)}</figcaption></figure>`
+		)
 		.join("")
 	const errors = v.console_errors.length
 		? `<details><summary>${v.console_errors.length} console error${v.console_errors.length === 1 ? "" : "s"}</summary><ul class="log">${v.console_errors
 				.slice(0, 50)
-				.map((e) => `<li><span class="t">${e.t === null ? "" : `${e.t.toFixed(1)}s`}</span> ${esc(e.text.slice(0, 300))}</li>`)
+				.map(
+					(e) =>
+						`<li><span class="t">${e.t === null ? "" : `${e.t.toFixed(1)}s`}</span> ${esc(e.text.slice(0, 300))}</li>`
+				)
 				.join("")}</ul></details>`
 		: ""
 	const net = v.network_errors.length
 		? `<details><summary>${v.network_errors.length} failed request${v.network_errors.length === 1 ? "" : "s"}</summary><ul class="log">${v.network_errors
 				.slice(0, 50)
-				.map((e) => `<li><span class="t">${e.status ?? e.error ?? ""}</span> ${esc(e.method)} ${esc(e.url.slice(0, 200))}</li>`)
+				.map(
+					(e) =>
+						`<li><span class="t">${e.status ?? e.error ?? ""}</span> ${esc(e.method)} ${esc(e.url.slice(0, 200))}</li>`
+				)
 				.join("")}</ul></details>`
 		: ""
 	return `<section class="run">
@@ -56,8 +72,14 @@ const section = (id: string, s: ReportSection, index: number, many: boolean) => 
 
 export const reportPage = (id: string, m: ReportManifest): string => {
 	const many = m.sections.length > 1
-	const meta = [m.repo, m.pr ? `PR #${m.pr}` : undefined, many ? undefined : m.sections[0]?.sha.slice(0, 7)].filter(Boolean).map((x) => esc(String(x))).join(" · ")
-	const created = Option.match(Option.liftThrowable(() => new Date(m.createdAt).toISOString().slice(0, 16).replace("T", " "))(), { onNone: () => m.createdAt, onSome: (d) => `${d} UTC` })
+	const meta = [m.repo, m.pr ? `PR #${m.pr}` : undefined, many ? undefined : m.sections[0]?.sha.slice(0, 7)]
+		.filter(Boolean)
+		.map((x) => esc(String(x)))
+		.join(" · ")
+	const created = Option.match(
+		Option.liftThrowable(() => new Date(m.createdAt).toISOString().slice(0, 16).replace("T", " "))(),
+		{ onNone: () => m.createdAt, onSome: (d) => `${d} UTC` }
+	)
 	return `<!doctype html>
 <html lang="en">
 <head>

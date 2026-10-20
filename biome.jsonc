@@ -1,0 +1,87 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "extends": ["ultracite/biome/core", "ultracite/biome/vitest"],
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "includes": [
+      "!**/.alchemy",
+      "!**/.wrangler",
+      "!apps/web/migrations",
+      "!**/CLAUDE.md"
+    ]
+  },
+  "formatter": {
+    "indentStyle": "tab",
+    "lineWidth": 120
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "asNeeded"
+    }
+  },
+  "linter": {
+    "rules": {
+      "performance": {
+        "noBarrelFile": "off",
+        "noNamespaceImport": "off",
+        "useTopLevelRegex": "warn",
+        "noAwaitInLoops": "warn"
+      },
+      "style": {
+        "useFilenamingConvention": {
+          "level": "error",
+          "options": {
+            "requireAscii": true,
+            "filenameCases": ["kebab-case"]
+          }
+        },
+        "useConsistentTypeDefinitions": {
+          "level": "error",
+          "options": {
+            "style": "type"
+          }
+        },
+        "noNonNullAssertion": "warn",
+        "noNestedTernary": "warn",
+        "useDefaultSwitchClause": "warn",
+        "noParameterProperties": "warn",
+        "noIncrementDecrement": {
+          "level": "error",
+          "options": {
+            "allowForLoopAfterthoughts": true
+          }
+        },
+        "useDestructuring": "warn"
+      },
+      "complexity": {
+        "noExcessiveCognitiveComplexity": "warn",
+        "noVoid": "off"
+      },
+      "suspicious": {
+        "useAwait": "warn",
+        "noBitwiseOperators": "warn",
+        "noEqualsToNull": "off"
+      },
+      "a11y": {
+        "noSvgWithoutTitle": "warn"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["**/test/**", "**/scripts/**", "examples/**", "skills/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUndeclaredDependencies": "off"
+          }
+        }
+      }
+    }
+  ]
+}

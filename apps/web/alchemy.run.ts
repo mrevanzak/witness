@@ -18,15 +18,15 @@ export const Reports = Cloudflare.Worker(
 	Effect.gen(function* () {
 		const domain = yield* Config.option(Config.String("WITNESS_DOMAIN")).pipe(Effect.orDie)
 		return {
+			compatibility: { date: "2026-09-25", flags: ["nodejs_compat"] },
 			main: "./src/worker.ts",
-			compatibility: { flags: ["nodejs_compat"], date: "2026-09-25" },
 			...Option.match(domain, { onNone: () => ({}), onSome: (name) => ({ domain: name }) }),
 			env: {
-				MEDIA: Media,
 				DB: Db,
-				UPLOAD_TOKEN: Config.Redacted("WITNESS_UPLOAD_TOKEN"),
+				MEDIA: Media,
 				// Report links use the Worker's canonical URL: the custom domain if set.
 				PUBLIC_URL: Cloudflare.Worker.URL,
+				UPLOAD_TOKEN: Config.Redacted("WITNESS_UPLOAD_TOKEN"),
 			},
 		}
 	})

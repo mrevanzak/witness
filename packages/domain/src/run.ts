@@ -4,127 +4,127 @@ import { Effect, Schema } from "effect"
 import { CriterionKind, CriterionStatus } from "./ids.ts"
 
 export class Criterion extends Schema.Class<Criterion>("@witness/Criterion")({
+	description: Schema.String,
+	evidence: Schema.String,
+	how_to_check: Schema.String,
 	id: Schema.String,
 	kind: CriterionKind,
-	description: Schema.String,
-	how_to_check: Schema.String,
-	evidence: Schema.String,
 }) {}
 
 export class Plan extends Schema.Class<Plan>("@witness/Plan")({
-	summary: Schema.String,
 	criteria: Schema.Array(Criterion),
+	summary: Schema.String,
 }) {}
 
 /** One line of steps.jsonl: a verifier tool call or walkthrough action. */
 export class Step extends Schema.Class<Step>("@witness/Step")({
-	/** Seconds since the first video frame (set once the recording stops). */
-	t: Schema.optionalKey(Schema.Finite),
 	/** Wall-clock ms on the computer's clock. */
 	at: Schema.Finite,
-	tool: Schema.String,
+	chars: Schema.optionalKey(Schema.Finite),
+	combo: Schema.optionalKey(Schema.String),
+	count: Schema.optionalKey(Schema.Finite),
+	criterion: Schema.optionalKey(Schema.String),
+	file: Schema.optionalKey(Schema.String),
+	forced: Schema.optionalKey(Schema.String),
 	/** Short human caption for the video. Never contains secrets. */
 	label: Schema.optionalKey(Schema.String),
-	criterion: Schema.optionalKey(Schema.String),
+	notes: Schema.optionalKey(Schema.String),
+	status: Schema.optionalKey(Schema.Union([CriterionStatus, Schema.Finite, Schema.Null])),
+	/** Seconds since the first video frame (set once the recording stops). */
+	t: Schema.optionalKey(Schema.Finite),
+	tail: Schema.optionalKey(Schema.Finite),
+	to_x: Schema.optionalKey(Schema.Finite),
+	to_y: Schema.optionalKey(Schema.Finite),
+	tool: Schema.String,
+	url: Schema.optionalKey(Schema.String),
 	/** Screen pixels (full resolution) of the action point. */
 	x: Schema.optionalKey(Schema.Finite),
 	y: Schema.optionalKey(Schema.Finite),
-	to_x: Schema.optionalKey(Schema.Finite),
-	to_y: Schema.optionalKey(Schema.Finite),
-	status: Schema.optionalKey(Schema.Union([CriterionStatus, Schema.Finite, Schema.Null])),
-	notes: Schema.optionalKey(Schema.String),
-	forced: Schema.optionalKey(Schema.String),
-	url: Schema.optionalKey(Schema.String),
-	combo: Schema.optionalKey(Schema.String),
-	chars: Schema.optionalKey(Schema.Finite),
-	count: Schema.optionalKey(Schema.Finite),
-	tail: Schema.optionalKey(Schema.Finite),
-	file: Schema.optionalKey(Schema.String),
 }) {}
 
 export const StoppedBecause = Schema.Literals(["done", "max_steps", "wall_time", "budget", "refusal", "model_gave_up"])
 export type StoppedBecause = typeof StoppedBecause.Type
 
 export class VerdictCriterion extends Schema.Class<VerdictCriterion>("@witness/VerdictCriterion")({
-	id: Schema.String,
-	kind: CriterionKind,
 	description: Schema.String,
-	status: CriterionStatus,
 	executor_status: CriterionStatus,
-	/** [start, end] seconds into raw.mp4. */
-	video_ts: Schema.OptionFromNullOr(Schema.Tuple([Schema.Finite, Schema.Finite])),
-	screenshot: Schema.OptionFromNullOr(Schema.String),
 	explanation: Schema.String,
 	forced: Schema.optionalKey(Schema.String),
+	id: Schema.String,
+	kind: CriterionKind,
+	screenshot: Schema.OptionFromNullOr(Schema.String),
+	status: CriterionStatus,
+	/** [start, end] seconds into raw.mp4. */
+	video_ts: Schema.OptionFromNullOr(Schema.Tuple([Schema.Finite, Schema.Finite])),
 }) {}
 
 export class ConsoleError extends Schema.Class<ConsoleError>("@witness/ConsoleError")({
 	t: Schema.NullOr(Schema.Finite),
-	type: Schema.String,
 	text: Schema.String,
+	type: Schema.String,
 	url: Schema.String,
 }) {}
 
 export class NetworkError extends Schema.Class<NetworkError>("@witness/NetworkError")({
-	t: Schema.NullOr(Schema.Finite),
-	method: Schema.String,
-	url: Schema.String,
-	status: Schema.optionalKey(Schema.Finite),
 	error: Schema.optionalKey(Schema.String),
+	method: Schema.String,
+	status: Schema.optionalKey(Schema.Finite),
+	t: Schema.NullOr(Schema.Finite),
+	url: Schema.String,
 }) {}
 
 export class Usage extends Schema.Class<Usage>("@witness/Usage")({
-	requests: Schema.Finite,
+	cache_read_tokens: Schema.Finite,
 	input_tokens: Schema.Finite,
 	output_tokens: Schema.Finite,
-	cache_read_tokens: Schema.Finite,
+	requests: Schema.Finite,
 	usd: Schema.Finite,
 }) {}
 
 export class Verdict extends Schema.Class<Verdict>("@witness/Verdict")({
-	overall: CriterionStatus,
-	summary: Schema.String,
-	criteria: Schema.Array(VerdictCriterion),
 	console_errors: Schema.Array(ConsoleError),
+	criteria: Schema.Array(VerdictCriterion),
+	duration_s: Schema.NullOr(Schema.Finite),
+	model: Schema.String,
 	network_errors: Schema.Array(NetworkError),
 	notes: Schema.String,
+	overall: CriterionStatus,
 	stopped_because: StoppedBecause,
-	model: Schema.String,
+	summary: Schema.String,
 	usage: Usage,
-	duration_s: Schema.NullOr(Schema.Finite),
 }) {}
 
 /** verdict.json written when the run never reached the app (boot failure, bad config). */
 export class BlockedVerdict extends Schema.Class<BlockedVerdict>("@witness/BlockedVerdict")({
+	log_tail: Schema.optionalKey(Schema.String),
+	notes: Schema.String,
 	overall: Schema.Literal("blocked"),
 	reason: Schema.String,
-	notes: Schema.String,
-	log_tail: Schema.optionalKey(Schema.String),
 }) {}
 
 export class Still extends Schema.Class<Still>("@witness/Still")({
-	file: Schema.String,
-	caption: Schema.String,
 	at: Schema.Finite,
+	caption: Schema.String,
+	file: Schema.String,
 	t: Schema.optionalKey(Schema.Finite),
 }) {}
 
 export class WalkthroughReport extends Schema.Class<WalkthroughReport>("@witness/WalkthroughReport")({
-	preview: Schema.String,
 	intro: Schema.String,
-	stills: Schema.Array(Still),
 	notes: Schema.Array(Schema.String),
+	preview: Schema.String,
+	stills: Schema.Array(Still),
 }) {}
 
 export class RunInfo extends Schema.Class<RunInfo>("@witness/RunInfo")({
+	base: Schema.NullOr(Schema.String),
 	id: Schema.String,
-	repo: Schema.String,
 	prefix: Schema.String,
 	ref: Schema.String,
+	repo: Schema.String,
 	sha: Schema.String,
-	base: Schema.NullOr(Schema.String),
-	task: Schema.String,
 	startedAt: Schema.String,
+	task: Schema.String,
 }) {}
 
 /**
@@ -132,26 +132,28 @@ export class RunInfo extends Schema.Class<RunInfo>("@witness/RunInfo")({
  * run, or before/after) plus the media paths uploaded next to it.
  */
 export class ReportSection extends Schema.Class<ReportSection>("@witness/ReportSection")({
+	gif: Schema.optionalKey(Schema.String),
 	label: Schema.optionalKey(Schema.String),
+	/** Per criterion: [start, end] seconds in the polished video (where its check is shown). */
+	seek: Schema.Record(Schema.String, Schema.Tuple([Schema.Finite, Schema.Finite])).pipe(
+		Schema.withDecodingDefaultKey(Effect.succeed({}))
+	),
 	sha: Schema.String,
-	verdict: Verdict,
 	stills: Schema.Array(Still),
+	verdict: Verdict,
 	/** Uploaded media paths, relative to the report. */
 	video: Schema.optionalKey(Schema.String),
-	gif: Schema.optionalKey(Schema.String),
-	/** Per criterion: [start, end] seconds in the polished video (where its check is shown). */
-	seek: Schema.Record(Schema.String, Schema.Tuple([Schema.Finite, Schema.Finite])).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
 }) {}
 
 export class ReportManifest extends Schema.Class<ReportManifest>("@witness/ReportManifest")({
-	title: Schema.String,
-	repo: Schema.optionalKey(Schema.String),
-	pr: Schema.optionalKey(Schema.String),
-	preview: Schema.String,
+	createdAt: Schema.String,
 	intro: Schema.String,
 	notes: Schema.Array(Schema.String),
 	/** The verdict that counts (the "after" section for a before/after). */
 	overall: CriterionStatus,
+	pr: Schema.optionalKey(Schema.String),
+	preview: Schema.String,
+	repo: Schema.optionalKey(Schema.String),
 	sections: Schema.Array(ReportSection),
-	createdAt: Schema.String,
+	title: Schema.String,
 }) {}

@@ -21,21 +21,27 @@ export const placeSection = (body: string, section: string): string => {
 	const trimmed = body.replace(/\s+$/, "")
 	const block = `${START}\n${section.trim()}\n${END}`
 	const existing = new RegExp(`${START}[\\s\\S]*?${END}`)
-	if (existing.test(trimmed)) return `${trimmed.replace(existing, () => block)}\n`
-	const footer = trimmed.search(/^(?:<!-- [\w-]+:footer -->|<!-- CURSOR_AGENT_PR_BODY_END -->|<div><a href="https:\/\/cursor\.com\/agents\/|🤖 Generated with)/m)
-	if (footer === -1) return `${trimmed}\n\n${block}\n`
+	if (existing.test(trimmed)) {
+		return `${trimmed.replace(existing, () => block)}\n`
+	}
+	const footer = trimmed.search(
+		/^(?:<!-- [\w-]+:footer -->|<!-- CURSOR_AGENT_PR_BODY_END -->|<div><a href="https:\/\/cursor\.com\/agents\/|🤖 Generated with)/m
+	)
+	if (footer === -1) {
+		return `${trimmed}\n\n${block}\n`
+	}
 	return `${trimmed.slice(0, footer).replace(/\s+$/, "")}\n\n${block}\n\n${trimmed.slice(footer)}\n`
 }
 
 /** ./relative media paths a report references, first-seen order. Pure. */
-export const referencedMedia = (markdown: string): ReadonlyArray<string> => [...new Set(markdown.match(MEDIA) ?? [])]
+export const referencedMedia = (markdown: string): readonly string[] => [...new Set(markdown.match(MEDIA) ?? [])]
 
 /**
  * The Ego script that attaches files to a PR's comment box and reads back the
  * user-attachments URLs GitHub inserts; the comment is never submitted, and the
  * box is cleared afterwards.
  */
-export const uploadScript = (space: string, prUrl: string, files: ReadonlyArray<string>) => `
+export const uploadScript = (space: string, prUrl: string, files: readonly string[]) => `
 const space = await taskSpace(${JSON.stringify(space)});
 const page = await space.newPage();
 const BOX = '#new_comment_field, textarea[name="comment[body]"]';
@@ -77,13 +83,21 @@ export const publish = Effect.fn("publish")(function* (o: {
 	const path = yield* Path.Path
 	const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
 	const repo = path.resolve(o.repo)
-	const gh = (args: ReadonlyArray<string>) => spawner.string(ChildProcess.make("gh", args, { cwd: repo })).pipe(Effect.map((s) => s.trim()), Effect.mapError((e) => new PublishError({ message: `gh ${args[0]}: ${e.message}` })))
+	const gh = (args: readonly string[]) =>
+		spawner.string(ChildProcess.make("gh", args, { cwd: repo })).pipe(
+			Effect.map((s) => s.trim()),
+			Effect.mapError((e) => new PublishError({ message: `gh ${args[0]}: ${e.message}` }))
+		)
 
 	const report = path.resolve(o.report)
 	const base = path.dirname(report)
 	let md = yield* fs.readFileString(report)
-	const files = referencedMedia(md).map((ref) => ({ ref, abs: path.join(base, ref) }))
-	for (const f of files) if (!(yield* fs.exists(f.abs))) return yield* new PublishError({ message: `report references a missing file: ${f.ref}` })
+	const files = referencedMedia(md).map((ref) => ({ abs: path.join(base, ref), ref }))
+	for (const f of files) {
+		if (!(yield* fs.exists(f.abs))) {
+			return yield* new PublishError({ message: `report references a missing file: ${f.ref}` })
+		}
+	}
 
 	let mode = o.mode
 	if (mode === "auto") {
@@ -92,25 +106,50 @@ export const publish = Effect.fn("publish")(function* (o: {
 		mode = author === me ? "description" : "comment"
 		yield* Console.error(`PR #${o.pr} author=${author}, me=${me} -> ${mode}`)
 	}
-	if (o.dryRun) return yield* Console.log(`dry run: would upload ${files.length} file(s) and update the ${mode}:\n${files.map((f) => `  ${f.ref}`).join("\n")}`)
+	if (o.dryRun) {
+		return yield* Console.log(
+			`dry run: would upload ${files.length} file(s) and update the ${mode}:\n${files.map((f) => `  ${f.ref}`).join("\n")}`
+		)
+	}
 
 	// Upload once per report; a cached result is reused on re-runs.
 	const cache = path.join(base, "upload-result.json")
-	let urls: Record<string, string> = (yield* fs.exists(cache)) ? yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Uploaded))(yield* fs.readFileString(cache)) : {}
+	let urls: Record<string, string> = (yield* fs.exists(cache))
+		? yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Uploaded))(yield* fs.readFileString(cache))
+		: {}
 	const todo = files.filter((f) => !urls[f.abs])
 	if (todo.length) {
-		if (Option.isNone(o.egoSpace)) return yield* new PublishError({ message: "--ego-space <id> is required to upload (an Ego task space signed in to GitHub)" })
+		if (Option.isNone(o.egoSpace)) {
+			return yield* new PublishError({
+				message: "--ego-space <id> is required to upload (an Ego task space signed in to GitHub)",
+			})
+		}
 		const prUrl = yield* gh(["pr", "view", o.pr, "--json", "url", "-q", ".url"])
-		const script = uploadScript(o.egoSpace.value, prUrl, todo.map((f) => f.abs))
+		const script = uploadScript(
+			o.egoSpace.value,
+			prUrl,
+			todo.map((f) => f.abs)
+		)
 		const output = yield* spawner
-			.string(ChildProcess.make("ego-browser", ["nodejs"], { stdin: { stream: Stream.make(new TextEncoder().encode(script)) } }))
+			.string(
+				ChildProcess.make("ego-browser", ["nodejs"], {
+					stdin: { stream: Stream.make(new TextEncoder().encode(script)) },
+				})
+			)
 			.pipe(Effect.mapError((e) => new PublishError({ message: `ego-browser: ${e.message}` })))
 		const line = output.split("\n").find((l) => l.startsWith("UPLOADED "))
-		if (!line) return yield* new PublishError({ message: `upload produced no URLs:\n${output.slice(-1500)}` })
-		urls = { ...urls, ...(yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Uploaded))(line.slice("UPLOADED ".length))) }
+		if (!line) {
+			return yield* new PublishError({ message: `upload produced no URLs:\n${output.slice(-1500)}` })
+		}
+		urls = {
+			...urls,
+			...(yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Uploaded))(line.slice("UPLOADED ".length))),
+		}
 		yield* fs.writeFileString(cache, JSON.stringify(urls, null, 2))
 	}
-	for (const f of files) md = md.split(f.ref).join(urls[f.abs] ?? f.ref)
+	for (const f of files) {
+		md = md.split(f.ref).join(urls[f.abs] ?? f.ref)
+	}
 	const section = path.join(base, "pr-section.md")
 	yield* fs.writeFileString(section, md)
 

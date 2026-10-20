@@ -1,10 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": [
-      "ES2023",
-      "DOM"
-    ],
+    "lib": ["ES2023", "DOM"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "allowImportingTsExtensions": true,
@@ -15,9 +12,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
-    "types": [
-      "node"
-    ],
+    "types": ["node"],
     "plugins": [
       {
         "name": "@effect/language-service"
@@ -32,8 +27,5 @@
     "packages/*/scripts",
     "packages/*/test"
   ],
-  "exclude": [
-    "apps/web",
-    "packages/renderer/remotion"
-  ]
+  "exclude": ["apps/web", "packages/renderer/remotion"]
 }

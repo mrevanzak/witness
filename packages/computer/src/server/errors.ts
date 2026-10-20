@@ -27,14 +27,14 @@ export class ExecError extends Schema.TaggedError<ExecError>()("ExecError", {
 
 /** A path outside /artifacts was requested. */
 export class ArtifactPathError extends Schema.TaggedError<ArtifactPathError>()("ArtifactPathError", {
-	path: Schema.String,
 	message: Schema.String,
+	path: Schema.String,
 }) {}
 
 /** A requested artifact file does not exist. */
 export class ArtifactNotFoundError extends Schema.TaggedError<ArtifactNotFoundError>()("ArtifactNotFoundError", {
-	path: Schema.String,
 	message: Schema.String,
+	path: Schema.String,
 }) {}
 
 /** Missing or wrong bearer token. */

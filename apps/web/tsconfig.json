@@ -1,17 +1,9 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "types": [
-      "@cloudflare/workers-types"
-    ],
-    "lib": [
-      "ES2023"
-    ]
+    "types": ["@cloudflare/workers-types"],
+    "lib": ["ES2023"]
   },
-  "include": [
-    "src",
-    "test",
-    "alchemy.run.ts"
-  ],
+  "include": ["src", "test", "alchemy.run.ts"],
   "exclude": []
 }
