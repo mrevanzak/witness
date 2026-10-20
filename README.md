@@ -191,8 +191,6 @@ examples/todo-app     demo app with a correct and a broken branch
 skills/witness        the Claude Code skill
 ```
 
-Design decisions and their reasons are in [DECISIONS.md](DECISIONS.md). What's done and what's next is in [GOALS.md](GOALS.md).
-
 ## Status
 
 Early. The pipeline is tested end to end with a scripted model and with walkthroughs, on the demo app and on a real Next.js + Strapi + Supabase monorepo. The live acceptance run with the real model (4 of 5 correct verdicts per fixture branch) hasn't been run yet. Treat independent-mode verdicts as a second opinion until it has.
