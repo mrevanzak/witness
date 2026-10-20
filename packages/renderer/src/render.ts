@@ -21,6 +21,7 @@ export class RenderError extends Schema.TaggedError<RenderError>()("RenderError"
 export type Layout = EvidenceDestination
 
 export type RenderResult = {
+	readonly animate: boolean
 	readonly captions: Option.Option<string>
 	readonly durationSec: number
 	readonly gif: string
@@ -29,19 +30,27 @@ export type RenderResult = {
 	readonly timeline: Timeline
 }
 
-/** Timeline options a layout implies (the hosted cut has no verdict card). */
-export const layoutOptions = (layout: Layout): Partial<TimelineOptions> =>
-	layout === "hosted" ? { endCardSec: 0 } : {}
+/** What polished.mp4 is rendered with: its layout, and whether the camera and cursor move. */
+export type RenderSettings = { readonly animate: boolean; readonly layout: Layout }
 
-const RenderedProps = Schema.Struct({ layout: Schema.optionalKey(EvidenceDestination) })
+/** Timeline options the settings imply (the hosted cut has no verdict card). */
+export const renderOptions = ({ animate, layout }: RenderSettings): Partial<TimelineOptions> => ({
+	animate,
+	...(layout === "hosted" ? { endCardSec: 0 } : {}),
+})
 
-/** The layout polished.mp4 was last rendered with, if it was rendered. */
-export const renderedLayout = Effect.fn("renderedLayout")(function* (runDir: string) {
+const RenderedProps = Schema.Struct({
+	animate: Schema.optionalKey(Schema.Boolean),
+	layout: Schema.optionalKey(EvidenceDestination),
+})
+
+/** The settings polished.mp4 was last rendered with, if it was rendered. */
+export const renderedSettings = Effect.fn("renderedSettings")(function* (runDir: string) {
 	const fs = yield* FileSystem.FileSystem
 	const path = yield* Path.Path
 	return yield* fs.readFileString(path.join(runDir, "render", "props.json")).pipe(
 		Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(RenderedProps))),
-		Effect.map((p) => p.layout ?? ("pr" as const)),
+		Effect.map((p): RenderSettings => ({ animate: p.animate ?? true, layout: p.layout ?? "pr" })),
 		Effect.option
 	)
 })
@@ -109,6 +118,7 @@ export const timelineForRun = Effect.fn("timelineForRun")(function* (
 export const renderRun = Effect.fn("renderRun")(function* (
 	runDirIn: string,
 	opts: {
+		readonly animate?: boolean
 		readonly label?: string
 		readonly layout?: Layout
 		readonly concurrency?: number
@@ -124,14 +134,20 @@ export const renderRun = Effect.fn("renderRun")(function* (
 		return yield* new RenderError({ message: `no recording at ${raw}` })
 	}
 	const layout = opts.layout ?? "pr"
-	const timeline = yield* timelineForRun(runDir, yield* probeDuration(raw), layoutOptions(layout), opts.label)
+	const animate = opts.animate ?? true
+	const timeline = yield* timelineForRun(
+		runDir,
+		yield* probeDuration(raw),
+		renderOptions({ animate, layout }),
+		opts.label
+	)
 
 	const outDir = path.join(runDir, "render")
 	yield* fs.makeDirectory(outDir, { recursive: true })
 	const propsPath = path.join(outDir, "props.json")
 	yield* fs.writeFileString(
 		propsPath,
-		JSON.stringify({ layout, timeline, title: timeline.end.title, video: "computer/raw.mp4" })
+		JSON.stringify({ animate, layout, timeline, title: timeline.end.title, video: "computer/raw.mp4" })
 	)
 	yield* fs.writeFileString(path.join(outDir, "timeline.json"), JSON.stringify(timeline, null, 1))
 
@@ -210,6 +226,7 @@ export const renderRun = Effect.fn("renderRun")(function* (
 		yield* fs.remove(vtt, { force: true }).pipe(Effect.mapError(failed("captions.vtt")))
 	}
 	return {
+		animate,
 		captions: layout === "hosted" ? Option.some(vtt) : Option.none(),
 		durationSec: yield* probeDuration(polished),
 		gif,

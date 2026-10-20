@@ -246,6 +246,22 @@ describe("buildTimeline", () => {
 		expect(bare.durationInFrames / bare.fps).toBeLessThan(60)
 	})
 
+	it("keeps the camera still and drops the cursor and ripples when animate is off", () => {
+		const still = buildTimeline({ ...input, options: { animate: false } })
+		for (const s of steps.filter((x) => x.tool === "click")) {
+			expect(zoomAt(still.zoom, s.t).scale).toBe(1)
+			const out = outputTimeOf(still, s.t)!
+			const { segment } = sourceTimeAt(still, Math.floor(out * still.fps))
+			expect(segment.kind === "video" && segment.rate).toBe(1)
+		}
+		expect(still.cursor).toEqual([])
+		expect(still.cursorVisible).toEqual([])
+		expect(still.clicks).toEqual([])
+		expect(still.captions).toEqual(tl.captions)
+		expect(still.segments.filter((s) => s.kind === "freeze")).toHaveLength(1)
+		expect(still.segments.at(-1)!.kind).toBe("end")
+	})
+
 	it("maps captions to output time without running into a freeze", () => {
 		const cues = captionCues(tl)
 		expect(cues).toHaveLength(tl.captions.length)

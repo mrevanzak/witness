@@ -1,9 +1,10 @@
 export {
 	type Layout,
-	layoutOptions,
 	RenderError,
 	type RenderResult,
-	renderedLayout,
+	type RenderSettings,
+	renderedSettings,
+	renderOptions,
 	renderRun,
 	timelineForRun,
 } from "./render.ts"

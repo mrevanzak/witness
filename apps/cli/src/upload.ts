@@ -13,7 +13,7 @@ import {
 	Verdict,
 	WalkthroughReport,
 } from "@witness/domain"
-import { layoutOptions, outputTimeOf, renderedLayout, timelineForRun } from "@witness/renderer"
+import { outputTimeOf, type RenderSettings, renderedSettings, renderOptions, timelineForRun } from "@witness/renderer"
 import { Config, Console, Effect, FileSystem, Option, Path, Redacted, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import { HttpApiClient, HttpApiMiddleware } from "effect/http-api"
@@ -114,8 +114,11 @@ const sectionFor = Effect.fn("sectionFor")(function* (runDir: string, label: str
 		if (yield* fs.exists(path.join(runDir, "preview.gif"))) {
 			gif = add("preview.gif", `${label}-preview.gif`)
 		}
-		const layout = Option.getOrElse(yield* renderedLayout(runDir), () => "pr" as const)
-		if (layout === "pr") {
+		const settings = Option.getOrElse(
+			yield* renderedSettings(runDir),
+			(): RenderSettings => ({ animate: true, layout: "pr" })
+		)
+		if (settings.layout === "pr") {
 			yield* Console.error(
 				`warning: ${runDir} was rendered with the PR layout (criteria rail in the video, small on the page); re-render with \`witness render --layout hosted\``
 			)
@@ -135,7 +138,7 @@ const sectionFor = Effect.fn("sectionFor")(function* (runDir: string, label: str
 				])
 			)).trim()
 		)
-		const timeline = yield* timelineForRun(runDir, duration, layoutOptions(layout))
+		const timeline = yield* timelineForRun(runDir, duration, renderOptions(settings))
 		for (const c of verdict.value.criteria) {
 			if (Option.isNone(c.video_ts)) {
 				continue

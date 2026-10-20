@@ -61,6 +61,7 @@ const Seconds = Schema.Finite.pipe(Schema.check(Schema.isGreaterThan(0)))
 
 /** The file shape (snake_case keys, as written in YAML). */
 const ConfigFile = Schema.Struct({
+	animation: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(true))),
 	env: EnvMap.pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
 	evidence: Schema.optionalKey(EvidenceDestination),
 	files: Schema.Record(Schema.String, NonEmpty)
@@ -88,6 +89,8 @@ const ConfigFile = Schema.Struct({
 
 /** The decoded config (camelCase, defaults applied, optional parts as `Option`). */
 export const WitnessConfig = Schema.Struct({
+	/** Zoom, pan, cursor and click ripples in the polished video. */
+	animation: Schema.Boolean,
 	/** Env for setup/start (secret env is merged in by the orchestrator). */
 	env: Schema.Record(Schema.String, Schema.String),
 	evidence: Schema.Option(EvidenceDestination),
@@ -118,6 +121,7 @@ const ConfigFromFile = ConfigFile.pipe(
 		Schema.toType(WitnessConfig),
 		SchemaTransformation.transform({
 			decode: (f) => ({
+				animation: f.animation,
 				env: f.env,
 				evidence: Option.fromUndefinedOr(f.evidence),
 				files: f.files,
@@ -132,6 +136,7 @@ const ConfigFromFile = ConfigFile.pipe(
 				url: f.url,
 			}),
 			encode: (c) => ({
+				animation: c.animation,
 				env: c.env,
 				health: c.health,
 				services: c.services,
