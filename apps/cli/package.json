@@ -9,6 +9,7 @@
   "dependencies": {
     "@acv/computer": "workspace:*",
     "@acv/orchestrator": "workspace:*",
-    "tsx": "4.23.15"
+    "tsx": "4.23.15",
+    "@acv/renderer": "workspace:*"
   }
 }

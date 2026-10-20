@@ -11,9 +11,11 @@
     "verify:smoke": "tsx packages/computer/scripts/smoke.ts",
     "verify": "tsx apps/cli/src/main.ts",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p packages/renderer/remotion/tsconfig.json",
     "e2e:scripted": "tsx packages/orchestrator/scripts/scripted-e2e.ts",
-    "acceptance:phase3": "tsx packages/orchestrator/scripts/acceptance-phase3.ts"
+    "acceptance:phase3": "tsx packages/orchestrator/scripts/acceptance-phase3.ts",
+    "render:run": "tsx packages/renderer/scripts/render.ts",
+    "acceptance:phase4": "tsx packages/renderer/scripts/acceptance-phase4.ts"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

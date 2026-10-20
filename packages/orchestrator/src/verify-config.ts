@@ -14,6 +14,13 @@ export interface VerifyConfig {
 	/** Optional test account the agent may use. The password is a secret: never logged or captioned. */
 	login?: { email?: string; username?: string; password?: string };
 	timeouts: { setupSec: number; bootSec: number };
+	/**
+	 * Host files copied into the app directory before setup, `{ "<dest in app>": "<host path>" }`.
+	 * Only honoured in a config passed with --config (never from the repo under test).
+	 */
+	files: Record<string, string>;
+	/** Host KEY=VALUE file whose variables reach setup/start and whose values are redacted everywhere. */
+	secretEnv?: string;
 }
 
 export class ConfigError extends Error {}
@@ -59,7 +66,7 @@ export function parseVerifyConfig(text: string): VerifyConfig {
 	}
 	if (raw == null || typeof raw !== "object" || Array.isArray(raw)) throw new ConfigError("verify.yaml must be a map");
 	const r = raw as Record<string, unknown>;
-	const known = new Set(["setup", "start", "url", "health", "services", "env", "login", "timeouts"]);
+	const known = new Set(["setup", "start", "url", "health", "services", "env", "login", "timeouts", "files", "secret_env"]);
 	for (const k of Object.keys(r)) if (!known.has(k)) throw new ConfigError(`unknown key: ${k}`);
 
 	const setup = r.setup == null ? [] : Array.isArray(r.setup) ? r.setup.map((c, i) => str(c, `setup[${i}]`)) : [str(r.setup, "setup")];
@@ -107,7 +114,30 @@ export function parseVerifyConfig(text: string): VerifyConfig {
 		env: strMap(r.env, "env"),
 		login,
 		timeouts: { setupSec: sec(t.setup, 900, "timeouts.setup"), bootSec: sec(t.boot, 180, "timeouts.boot") },
+		files: Object.fromEntries(
+			Object.entries(r.files == null ? {} : (r.files as Record<string, unknown>)).map(([dest, src]) => {
+				if (dest.startsWith("/") || dest.split("/").includes("..")) throw new ConfigError(`files.${dest}: destination must be relative to the app`);
+				return [dest, str(src, `files.${dest}`)];
+			})
+		),
+		secretEnv: r.secret_env == null ? undefined : str(r.secret_env, "secret_env"),
 	};
+}
+
+/** Parses a KEY=VALUE env file (comments, blank lines and `export ` prefixes allowed). */
+export function parseEnvFile(text: string): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const raw of text.split("\n")) {
+		const line = raw.trim().replace(/^export\s+/, "");
+		if (!line || line.startsWith("#")) continue;
+		const eq = line.indexOf("=");
+		if (eq <= 0) continue;
+		const key = line.slice(0, eq).trim();
+		let value = line.slice(eq + 1).trim();
+		if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+		if (ENV_KEY.test(key)) out[key] = value;
+	}
+	return out;
 }
 
 /** Values that must never appear in logs, steps, captions or reports. */

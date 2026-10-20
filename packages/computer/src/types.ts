@@ -121,6 +121,8 @@ export interface Computer {
 	readonly network: string;
 	/** Host URL of the noVNC live view, when enabled. */
 	readonly liveViewUrl?: string;
+	/** Control server address and token (for hand-driving a kept computer). Treat the token as a secret. */
+	readonly control?: { url: string; token: string };
 	health(): Promise<{ ok: boolean; browser: boolean; recording: boolean }>;
 	screenshot(opts?: ShotOptions): Promise<Screenshot>;
 	act(action: Action & { settle_ms?: number; shot?: ShotOptions }): Promise<Screenshot>;

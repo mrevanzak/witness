@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Computer, ComputerProvider } from "@acv/computer";
 import { redact, redactDeep } from "./redact.ts";
@@ -62,6 +62,11 @@ export class RunManager {
 		const t = Date.now();
 		const computer = await this.provider.create({ runId: run.id, artifactsDir: run.computerDir, enableVnc: opts.enableVnc });
 		run.log("computer.created", { id: computer.id.slice(0, 12), network: computer.network, ms: Date.now() - t, liveView: computer.liveViewUrl });
+		if (computer.control) {
+			const p = join(run.dir, "session.json");
+			writeFileSync(p, JSON.stringify({ id: computer.id, ...computer.control, liveView: computer.liveViewUrl }, null, 2));
+			chmodSync(p, 0o600);
+		}
 		const onSignal = () => {
 			run.log("interrupted");
 			void computer.destroy().finally(() => process.exit(130));

@@ -70,3 +70,49 @@ export function tarEntries(tar: Buffer): Array<{ name: string; uid: number; gid:
 	}
 	return entries;
 }
+
+/** Builds a ustar archive (parent directories included) owned by `owner`. Names use "/" and are relative. */
+export function makeTar(files: Array<{ name: string; data: Buffer; mode?: number }>, owner: { uid: number; gid: number; user: string; group: string }, mtime = Math.floor(Date.now() / 1000)): Buffer {
+	const blocks: Buffer[] = [];
+	const seen = new Set<string>();
+	const header = (name: string, size: number, mode: number, type: "0" | "5") => {
+		const h = Buffer.alloc(BLOCK);
+		let prefix = "";
+		let base = name;
+		if (Buffer.byteLength(name) > 99) {
+			const cut = name.lastIndexOf("/", 154);
+			if (cut <= 0 || Buffer.byteLength(name.slice(cut + 1)) > 99) throw new Error(`tar: name too long: ${name}`);
+			prefix = name.slice(0, cut);
+			base = name.slice(cut + 1);
+		}
+		writeString(h, 0, 100, base);
+		writeOctal(h, 100, 8, mode);
+		writeOctal(h, 108, 8, owner.uid);
+		writeOctal(h, 116, 8, owner.gid);
+		writeOctal(h, 124, 12, size);
+		writeOctal(h, 136, 12, mtime);
+		h.write(type, 156, 1, "ascii");
+		h.write("ustar\0", 257, 6, "ascii");
+		h.write("00", 263, 2, "ascii");
+		writeString(h, 265, 32, owner.user);
+		writeString(h, 297, 32, owner.group);
+		writeString(h, 345, 155, prefix);
+		h.write(`${checksum(h).toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
+		return h;
+	};
+	for (const f of files) {
+		const name = f.name.replace(/^\.?\/+/, "");
+		if (!name || name.split("/").includes("..")) throw new Error(`tar: bad name ${f.name}`);
+		const parts = name.split("/");
+		for (let i = 1; i < parts.length; i++) {
+			const dir = `${parts.slice(0, i).join("/")}/`;
+			if (!seen.has(dir)) {
+				seen.add(dir);
+				blocks.push(header(dir, 0, 0o755, "5"));
+			}
+		}
+		blocks.push(header(name, f.data.length, f.mode ?? 0o644, "0"), f.data, Buffer.alloc((BLOCK - (f.data.length % BLOCK)) % BLOCK));
+	}
+	blocks.push(Buffer.alloc(BLOCK * 2));
+	return Buffer.concat(blocks);
+}

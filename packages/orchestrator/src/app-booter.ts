@@ -18,7 +18,7 @@ const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
  * health URL, and opens the app in Chromium. A boot failure is a `blocked`
  * result with the log tail, not an exception.
  */
-export async function bootApp(computer: Computer, cfg: VerifyConfig, source: Buffer, run: Run): Promise<BootResult> {
+export async function bootApp(computer: Computer, cfg: VerifyConfig, source: Buffer, run: Run, staged: Buffer | null = null): Promise<BootResult> {
 	const started = Date.now();
 	const blocked = async (stage: Extract<BootResult, { status: "blocked" }>["stage"], detail: string, logFile?: string): Promise<BootResult> => {
 		const logTail = logFile ? await computer.logs(logFile, 60).catch(() => "") : "";
@@ -27,6 +27,7 @@ export async function bootApp(computer: Computer, cfg: VerifyConfig, source: Buf
 	};
 
 	await computer.putArchive(chownTar(source, QA), APP_DIR);
+	if (staged) await computer.putArchive(staged, APP_DIR);
 	const check = await computer.exec({ cmd: `test -w ${APP_DIR} && ls -A ${APP_DIR} | head -50` });
 	if (check.code !== 0) return blocked("upload", `source not writable in ${APP_DIR}: ${check.stderr}`);
 	run.log("boot.source", { files: check.stdout.split("\n").filter(Boolean).length });

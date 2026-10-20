@@ -100,7 +100,7 @@ export class DockerComputerProvider implements ComputerProvider {
 			const hostPort = (p: string) => info.NetworkSettings.Ports[p]?.[0]?.HostPort;
 			const control = new ControlClient(`http://127.0.0.1:${hostPort("7070/tcp")}`, token);
 			await waitFor(async () => (await control.health()).ok, 30_000, "computer control server");
-			return new DockerComputer(this.docker, spec.runId, container, networkName, control, spec.enableVnc ? `http://127.0.0.1:${hostPort("6080/tcp")}/vnc.html?autoconnect=1&view_only=1` : undefined);
+			return new DockerComputer(this.docker, spec.runId, container, networkName, control, spec.enableVnc ? `http://127.0.0.1:${hostPort("6080/tcp")}/vnc.html?autoconnect=1&view_only=1` : undefined, { url: control.baseUrl, token });
 		} catch (e) {
 			await removeRun(this.docker, spec.runId).catch(() => undefined);
 			throw e;
@@ -127,47 +127,48 @@ class DockerComputer implements Computer {
 		readonly runId: string,
 		private readonly container: Docker.Container,
 		readonly network: string,
-		private readonly control: ControlClient,
-		readonly liveViewUrl?: string
+		private readonly controlClient: ControlClient,
+		readonly liveViewUrl?: string,
+		readonly control?: { url: string; token: string }
 	) {
 		this.id = container.id;
 	}
 
 	health() {
-		return this.control.health();
+		return this.controlClient.health();
 	}
 	screenshot(opts?: Parameters<Computer["screenshot"]>[0]) {
-		return this.control.screenshot(opts);
+		return this.controlClient.screenshot(opts);
 	}
 	act(action: Parameters<Computer["act"]>[0]) {
-		return this.control.act(action);
+		return this.controlClient.act(action);
 	}
 	exec(req: Parameters<Computer["exec"]>[0]) {
-		return this.control.exec(req);
+		return this.controlClient.exec(req);
 	}
 	async putArchive(tar: Buffer, destDir: string) {
 		await this.container.putArchive(tar, { path: destDir });
 	}
 	startRecording(path?: string) {
-		return this.control.startRecording(path);
+		return this.controlClient.startRecording(path);
 	}
 	stopRecording() {
-		return this.control.stopRecording();
+		return this.controlClient.stopRecording();
 	}
 	navigate(url: string, opts?: { timeoutMs?: number }) {
-		return this.control.navigate(url, opts?.timeoutMs);
+		return this.controlClient.navigate(url, opts?.timeoutMs);
 	}
 	pageSnapshot(opts?: { maxText?: number }) {
-		return this.control.pageSnapshot(opts?.maxText);
+		return this.controlClient.pageSnapshot(opts?.maxText);
 	}
 	consoleMessages() {
-		return this.control.consoleMessages();
+		return this.controlClient.consoleMessages();
 	}
 	networkEvents() {
-		return this.control.networkEvents();
+		return this.controlClient.networkEvents();
 	}
 	logs(file: string, tail?: number) {
-		return this.control.logs(file, tail);
+		return this.controlClient.logs(file, tail);
 	}
 
 	async startService(name: string, spec: ServiceSpec): Promise<void> {

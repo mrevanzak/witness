@@ -14,3 +14,5 @@ export * from "./plan.ts";
 export * from "./execute.ts";
 export * from "./verdict.ts";
 export * from "./agent.ts";
+export * from "./walkthrough.ts";
+export * from "./report.ts";

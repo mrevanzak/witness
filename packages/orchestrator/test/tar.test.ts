@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { checksum, chownTar, tarEntries } from "../src/tar.ts";
+import { checksum, chownTar, makeTar, tarEntries } from "../src/tar.ts";
 
 const QA = { uid: 1000, gid: 1000, user: "qa", group: "qa" };
 
@@ -53,5 +53,25 @@ describe("chownTar", () => {
 	it("computes the checksum with the field as spaces", () => {
 		const h = Buffer.alloc(512);
 		expect(checksum(h)).toBe(8 * 0x20);
+	});
+});
+
+describe("makeTar", () => {
+	it("writes files with parent directories that system tar extracts", () => {
+		const tar = makeTar([{ name: ".qa/sb.env", data: Buffer.from("A=1\n") }, { name: `deep/${"x".repeat(80)}/${"y".repeat(60)}.txt`, data: Buffer.alloc(700, 1) }], QA, 1_700_000_000);
+		expect(tarEntries(tar).map((e) => [e.name, e.type, e.uid])).toEqual([
+			[".qa/", "5", 1000],
+			[".qa/sb.env", "0", 1000],
+			["deep/", "5", 1000],
+			[`deep/${"x".repeat(80)}/`, "5", 1000],
+			[`deep/${"x".repeat(80)}/${"y".repeat(60)}.txt`, "0", 1000],
+		]);
+		const listing = execFileSync("tar", ["-tvf", "-"], { input: tar }).toString();
+		expect(listing).toContain(".qa/sb.env");
+		expect(listing).toContain(`${"y".repeat(60)}.txt`);
+		expect(() => chownTar(tar, QA)).not.toThrow();
+	});
+	it("rejects path traversal", () => {
+		expect(() => makeTar([{ name: "../etc/passwd", data: Buffer.alloc(0) }], QA)).toThrow(/bad name/);
 	});
 });

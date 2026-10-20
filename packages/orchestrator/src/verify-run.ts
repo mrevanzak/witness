@@ -1,10 +1,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { ComputerProvider } from "@acv/computer";
 import { bootApp, type BootResult } from "./app-booter.ts";
 import { archive, changedFiles, diff, resolveRepo, showFile, type RepoRef } from "./git.ts";
 import { RunManager, type Run } from "./run-manager.ts";
-import { configSecrets, parseVerifyConfig, type VerifyConfig } from "./verify-config.ts";
+import { configSecrets, parseEnvFile, parseVerifyConfig, type VerifyConfig } from "./verify-config.ts";
+import { makeTar } from "./tar.ts";
 
 export interface VerifyOptions {
 	repo: string;
@@ -18,6 +19,8 @@ export interface VerifyOptions {
 	bootOnly?: boolean;
 	/** Extra context for the planner (e.g. PR title/body). */
 	context?: string;
+	/** A verify.yaml outside the repo (for repos without one). Its `files` and `secret_env` resolve relative to it. */
+	configPath?: string;
 }
 
 export interface VerifyOutcome {
@@ -48,7 +51,7 @@ export async function verify(provider: ComputerProvider, opts: VerifyOptions, ag
 	const repo = await resolveRepo(opts.repo, opts.ref, opts.base);
 	run.log("run.start", { repo: repo.root, prefix: repo.prefix, sha: repo.sha, base: repo.baseSha, task: opts.task.slice(0, 200) });
 
-	const verifyYaml = await showFile(repo, "verify.yaml");
+	const verifyYaml = opts.configPath ? readFileSync(opts.configPath, "utf8") : await showFile(repo, "verify.yaml");
 	const blockedEarly = (reason: string, detail: string): VerifyOutcome => {
 		run.log("run.blocked", { reason, detail });
 		run.writeJson("verdict.json", { overall: "blocked", reason, detail, criteria: [], console_errors: [], notes: detail });
@@ -62,6 +65,20 @@ export async function verify(provider: ComputerProvider, opts: VerifyOptions, ag
 		return blockedEarly("invalid_verify_yaml", (e as Error).message);
 	}
 	run.secrets.push(...configSecrets(cfg));
+	// Host files and secret env only from a verifier-side config, never from the repo under test.
+	let staged: Buffer | null = null;
+	if (opts.configPath) {
+		const base = dirname(resolve(opts.configPath));
+		if (cfg.secretEnv) {
+			const secretEnv = parseEnvFile(readFileSync(resolve(base, cfg.secretEnv), "utf8"));
+			cfg = { ...cfg, env: { ...cfg.env, ...secretEnv } };
+			run.secrets.push(...Object.values(secretEnv).filter((v) => v.length >= 6));
+		}
+		const files = Object.entries(cfg.files).map(([name, src]) => ({ name, data: readFileSync(resolve(base, src)), mode: /\.(sh|mjs)$/.test(name) ? 0o755 : 0o644 }));
+		if (files.length) staged = makeTar(files, { uid: 1000, gid: 1000, user: "qa", group: "qa" });
+	} else if (Object.keys(cfg.files).length || cfg.secretEnv) {
+		return blockedEarly("invalid_verify_yaml", "files/secret_env are only allowed in a config passed with --config");
+	}
 
 	const change: Change = {
 		repo,
@@ -76,8 +93,9 @@ export async function verify(provider: ComputerProvider, opts: VerifyOptions, ag
 	run.writeJson("run.json", { id: run.id, repo: repo.root, prefix: repo.prefix, ref: opts.ref, sha: repo.sha, base: repo.baseSha, task: opts.task, startedAt: new Date().toISOString() });
 
 	const source = await archive(repo);
+	run.log("source", { bytes: source.length });
 	return manager.withComputer(run, { keep: opts.keep, enableVnc: opts.enableVnc }, async (computer) => {
-		const boot = await bootApp(computer, cfg, source, run);
+		const boot = await bootApp(computer, cfg, source, run, staged);
 		if (boot.status === "blocked") {
 			run.writeJson("verdict.json", {
 				overall: "blocked",

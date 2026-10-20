@@ -1,0 +1,5 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": { "jsx": "react-jsx", "allowImportingTsExtensions": true, "types": ["node", "react"] },
+  "include": ["./**/*.ts", "./**/*.tsx", "../src/timeline.ts"]
+}

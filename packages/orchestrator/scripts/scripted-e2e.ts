@@ -57,6 +57,9 @@ class ScriptedModel implements Model {
 	}
 
 	async create(req: ModelRequest): Promise<ModelMessage> {
+		// Simulated model latency (SCRIPTED_DELAY_MS) gives realistic idle stretches for the renderer.
+		const delay = Number(process.env.SCRIPTED_DELAY_MS ?? 0);
+		if (delay) await new Promise((r) => setTimeout(r, delay * (0.6 + ((this.step * 37) % 10) / 12.5)));
 		const snap = this.lastSnapshot(req);
 		const s = this.step++;
 		switch (s) {
@@ -108,10 +111,11 @@ class ScriptedModel implements Model {
 const root = resolve(import.meta.dirname, "../../..");
 const fixture = execFileSync("bash", [resolve(root, "examples/todo-app/make-fixture.sh")]).toString().trim();
 const provider = new DockerComputerProvider();
+const only = process.argv[2];
 const cases = [
 	{ ref: "feat/empty-title", expect: "pass" },
 	{ ref: "feat/empty-title-broken", expect: "fail" },
-] as const;
+].filter((c) => !only || c.ref === only) as Array<{ ref: string; expect: "pass" | "fail" }>;
 
 let failed = 0;
 for (const c of cases) {

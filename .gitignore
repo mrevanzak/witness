@@ -7,3 +7,6 @@ out/
 .env
 .env.*
 !.env.example
+
+# staged local secrets
+examples/*/sb.env
