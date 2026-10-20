@@ -3,11 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "dependencies": {
-    "dockerode": "4.0.12"
+    "@effect/platform-node": "4.0.5",
+    "@witness/domain": "workspace:*",
+    "dockerode": "4.0.12",
+    "effect": "4.0.5",
+    "playwright-core": "1.56.1"
   },
   "devDependencies": {
-    "@types/dockerode": "4.0.2"
+    "@types/dockerode": "4.0.2",
+    "esbuild": "0.25.10"
   }
 }

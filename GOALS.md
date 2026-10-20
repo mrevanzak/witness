@@ -11,13 +11,13 @@ The codebase is written in Effect 4 end to end: services and layers for every bo
 ## Milestones
 
 ### M1. Effect 4 foundation
-- [ ] Workspace on `effect@4.0.5`, `@effect/platform-node`, `@effect/vitest`, Effect language service in `tsconfig`.
-- [ ] `@witness/domain`: Schema models for `witness.yaml`, plan, criteria, steps, verdict, walkthrough report, run manifest; branded `RunId`; every expected failure a Schema tagged error.
+- [x] Workspace on `effect@4.0.5`, `@effect/platform-node`, `@effect/vitest`, Effect language service in `tsconfig`.
+- [x] `@witness/domain`: Schema models for `witness.yaml`, plan, criteria, steps, verdict, walkthrough report, run manifest; branded `RunId`; every expected failure a Schema tagged error.
 - **Check:** `pnpm typecheck` and the domain tests pass; existing fixtures (`verdict.json`, `steps.jsonl`) from earlier runs decode.
 
 ### M2. Computer in Effect
-- [ ] `ControlServer` (in the image) rewritten as an Effect HTTP server; child processes (Chromium, ffmpeg, xdotool) as scoped resources.
-- [ ] `Computer` service and `DockerComputer` layer: the computer's lifetime is a `Scope` (acquire = container + network, release = teardown), control client on Effect `HttpClient`.
+- [x] `ControlServer` (in the image) rewritten as an Effect HTTP server; child processes (Chromium, ffmpeg, xdotool) as scoped resources.
+- [x] `Computer` service and `DockerComputer` layer: the computer's lifetime is a `Scope` (acquire = container + network, release = teardown), control client on Effect `HttpClient`.
 - **Check:** `pnpm witness:smoke` passes (desktop, Chromium, click, still, stop under 3 s, `raw.mp4` within ±1 s of wall time).
 
 ### M3. Orchestrator in Effect
@@ -44,6 +44,12 @@ The codebase is written in Effect 4 end to end: services and layers for every bo
 - [ ] README for a public project (what it is, why, quick start, how it works, credits), MIT license, CONTRIBUTING, CI (typecheck + unit tests), issue templates.
 - [ ] No employer-specific material in the repo; example configs only for the demo app.
 - **Check:** a fresh clone builds and runs `pnpm test` and `pnpm witness:smoke` from the README alone.
+
+### M8. Faster repeat runs
+- [ ] Persistent pnpm store volume shared across runs.
+- [ ] Snapshot the computer after `setup`, keyed by lockfile + seed inputs, so repeat runs of a PR skip straight to `start`.
+- [ ] Independent mode: a faster model for the step loop, Opus for plan and review.
+- **Check:** a second run of the same moumint PR boots in under a minute.
 
 ### Carried over
 - [ ] Phase 3 live acceptance with the real model: `pnpm acceptance:phase3` 4/5 per fixture branch (needs `ANTHROPIC_API_KEY`).

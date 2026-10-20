@@ -1,3 +1,4 @@
-export * from "./types.ts";
-export { ControlClient } from "./control-client.ts";
-export { DockerComputerProvider, DEFAULT_IMAGE, dockerFromEnv, waitFor } from "./docker.ts";
+export * from "./protocol.ts"
+export * from "./Computer.ts"
+export { makeControlClient } from "./ControlClient.ts"
+export { DockerComputerProvider } from "./DockerProvider.ts"

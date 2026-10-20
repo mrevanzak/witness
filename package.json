@@ -7,15 +7,16 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "image:build": "docker build -t witness-computer:dev infra/computer",
-    "verify:smoke": "tsx packages/computer/scripts/smoke.ts",
+    "image:build": "pnpm build:control && docker build -t witness-computer:dev infra/computer",
     "witness": "tsx apps/cli/src/main.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json && tsc -p packages/renderer/remotion/tsconfig.json",
     "e2e:scripted": "tsx packages/orchestrator/scripts/scripted-e2e.ts",
     "acceptance:phase3": "tsx packages/orchestrator/scripts/acceptance-phase3.ts",
     "render:run": "tsx packages/renderer/scripts/render.ts",
-    "acceptance:phase4": "tsx packages/renderer/scripts/acceptance-phase4.ts"
+    "acceptance:phase4": "tsx packages/renderer/scripts/acceptance-phase4.ts",
+    "build:control": "esbuild packages/computer/src/server/main.ts --bundle --platform=node --format=esm --target=node22 --external:playwright-core --log-level=warning --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=infra/computer/control/dist/control.mjs",
+    "witness:smoke": "tsx packages/computer/scripts/smoke.ts"
   },
   "devDependencies": {
     "@effect/language-service": "0.87.5",
@@ -23,6 +24,7 @@
     "@effect/vitest": "4.0.5",
     "@types/node": "22.20.5",
     "effect": "4.0.5",
+    "esbuild": "0.25.10",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "vitest": "5.0.5"

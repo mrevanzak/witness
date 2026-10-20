@@ -26,11 +26,11 @@ RUN groupmod -n qa node && usermod -l qa -d /home/qa -m node \
 
 COPY control/package.json control/package-lock.json /opt/control/
 RUN cd /opt/control && npm ci --omit=dev && npm cache clean --force
-COPY control/ /opt/control/
+COPY control/dist/control.mjs /opt/control/control.mjs
 COPY start.sh /usr/local/bin/start.sh
 COPY fluxbox/ /home/qa/.fluxbox/
 # Scripts may be checked out with CRLF on Windows hosts; shebangs need LF.
-RUN sed -i 's/\r$//' /usr/local/bin/start.sh /opt/control/*.mjs /home/qa/.fluxbox/* \
+RUN sed -i 's/\r$//' /usr/local/bin/start.sh /home/qa/.fluxbox/* \
 	&& chmod +x /usr/local/bin/start.sh && chown -R qa:qa /home/qa/.fluxbox
 
 USER qa
