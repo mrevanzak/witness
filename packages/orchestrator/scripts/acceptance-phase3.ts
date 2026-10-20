@@ -33,21 +33,20 @@ const program = Effect.gen(function* () {
 			const out = yield* verify({
 				base: Option.some("main"),
 				configPath: Option.none(),
-				context: Option.none(),
 				cpus: 2,
 				enableVnc: false,
 				keep: false,
 				memoryGb: 4,
-				mode: { _tag: "Agent" },
+				mode: { _tag: "Agent", execute: {} },
 				parallel: false,
 				ref: b.ref,
 				repo: fixture,
-				runsDir,
 				// Verdict checks per branch: the change only, no before run.
 				states: Option.some("after"),
 				task: TASK,
-			}).pipe(Effect.provide(runLayer(runsDir).agent.pipe(Layer.provideMerge(Model.claude))))
-			const v = Option.getOrUndefined(out.verdict)
+			}).pipe(Effect.provide(runLayer(runsDir).pipe(Layer.provideMerge(Model.claude))))
+			const v = out.result._tag === "Verified" ? out.result.verdict : undefined
+			const overall = v?.overall ?? "blocked"
 			usd += v?.usage.usd ?? 0
 			const tsOk =
 				!!v &&
@@ -56,12 +55,12 @@ const program = Effect.gen(function* () {
 				)
 			const failTs =
 				b.expect !== "fail" || (v?.criteria.some((c) => c.status === "fail" && Option.isSome(c.video_ts)) ?? false)
-			const hit = out.overall === b.expect && tsOk && failTs
+			const hit = overall === b.expect && tsOk && failTs
 			if (hit) {
 				hits += 1
 			}
 			yield* Console.log(
-				`${b.ref} #${i}: ${out.overall}${hit ? "" : "  <-- miss"}  ${v?.criteria.map((c) => `${c.id}=${c.status}`).join(" ") ?? ""}  $${v?.usage.usd.toFixed(2) ?? "?"}  ${out.runDir}`
+				`${b.ref} #${i}: ${overall}${hit ? "" : "  <-- miss"}  ${v?.criteria.map((c) => `${c.id}=${c.status}`).join(" ") ?? ""}  $${v?.usage.usd.toFixed(2) ?? "?"}  ${out.runDir}`
 			)
 		}
 		const pass = hits >= Math.ceil(n * 0.8)

@@ -201,31 +201,32 @@ const program = Effect.gen(function* () {
 		const outcome = yield* verify({
 			base: Option.some("main"),
 			configPath: Option.none(),
-			context: Option.none(),
 			cpus: 2,
 			enableVnc: false,
 			keep: false,
 			memoryGb: 4,
-			mode: { _tag: "Agent" },
+			mode: { _tag: "Agent", execute: {} },
 			parallel: false,
 			ref: c.ref,
 			repo: fixture,
-			runsDir: path.join(root, "runs"),
 			// Verdict checks per branch: the change only, no before run.
 			states: Option.some("after"),
 			task: "Validate empty todo titles",
-		}).pipe(Effect.provide(runLayer(path.join(root, "runs")).agent))
-		const ok = outcome.overall === c.expect
+		}).pipe(Effect.provide(runLayer(path.join(root, "runs"))))
+		const r = outcome.result
+		const overall = r._tag === "Verified" ? r.verdict.overall : "blocked"
+		const ok = overall === c.expect
 		if (!ok) {
 			failed += 1
 		}
-		const detail = Option.match(outcome.verdict, {
-			onNone: () => Option.match(outcome.blocked, { onNone: () => "", onSome: (b) => `${b.reason}: ${b.message}` }),
-			onSome: (v) =>
-				v.criteria.map((x) => `${x.id}=${x.status} ${JSON.stringify(Option.getOrNull(x.video_ts))}`).join(" "),
-		})
+		const detail =
+			r._tag === "Verified"
+				? r.verdict.criteria.map((x) => `${x.id}=${x.status} ${JSON.stringify(Option.getOrNull(x.video_ts))}`).join(" ")
+				: r._tag === "Blocked"
+					? `${r.blocked.reason}: ${r.blocked.notes}`
+					: ""
 		yield* Effect.logInfo(
-			`${ok ? "OK  " : "FAIL"} ${c.ref}: ${outcome.overall} (expected ${c.expect}) ${detail} ${outcome.runDir}`
+			`${ok ? "OK  " : "FAIL"} ${c.ref}: ${overall} (expected ${c.expect}) ${detail} ${outcome.runDir}`
 		)
 	}
 	if (failed) {

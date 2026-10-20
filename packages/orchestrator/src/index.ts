@@ -1,16 +1,30 @@
-export * from "./app-booter.ts"
-export * from "./change.ts"
-export * from "./current-run.ts"
-export * from "./diff-context.ts"
-export * from "./executor.ts"
-export * from "./git.ts"
-export * from "./model.ts"
-export * from "./planner.ts"
-export * from "./playwright-spec.ts"
-export * from "./reporter.ts"
-export * from "./reviewer.ts"
-export * from "./steps.ts"
-export * from "./stuck.ts"
-export * from "./tar.ts"
-export * from "./verifier.ts"
-export * from "./walkthrough.ts"
+export { AppBootFailed, BootStage } from "./app-booter.ts"
+export type { Change } from "./change.ts"
+export { type CriterionRecord, type ModeRun, ReviewOutput } from "./criteria.ts"
+export { CurrentRun, type LiveEvent, newRunId, type Publish, RunWriteError } from "./current-run.ts"
+export { defaultExecuteOptions, type ExecuteOptions } from "./executor.ts"
+export { Git, GitError, type RepoRef } from "./git.ts"
+export {
+	Model,
+	ModelBudgetExceeded,
+	ModelError,
+	type ModelMessage,
+	ModelOutputInvalid,
+	type ModelRequest,
+	type Usage,
+} from "./model.ts"
+export { PlanInvalid } from "./planner.ts"
+export { SpecFailed, type SpecOptions } from "./playwright-spec.ts"
+export { ActionFailed, Recorder, type RecorderApi, type ShotSpace, ToolCall } from "./recorder.ts"
+export { SESSION_SHOT_WIDTH, type SessionProgram, type SessionSide } from "./session.ts"
+export {
+	exitCodeOfResult,
+	modelFor,
+	type RunOutcome,
+	type RunResult,
+	runLayer,
+	type VerifyMode,
+	type VerifyOptions,
+	type VerifyOutcome,
+	verify,
+} from "./verifier.ts"
