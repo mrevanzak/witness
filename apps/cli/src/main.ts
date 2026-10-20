@@ -46,7 +46,7 @@ const run = Command.make(
 		bootOnly: Flag.Boolean("boot-only").pipe(Flag.withDescription("Boot the app, take a screenshot, stop"), Flag.withDefault(false)),
 		keep: Flag.Boolean("keep").pipe(Flag.withDescription("Keep the computer running afterwards (see session.json)"), Flag.withDefault(false)),
 		vnc: Flag.Boolean("vnc").pipe(Flag.withDescription("Expose the computer's noVNC endpoint"), Flag.withDefault(false)),
-		live: Flag.Boolean("live").pipe(Flag.withDescription("Open a local page that streams the desktop, criteria and steps while the run goes"), Flag.withDefault(false)),
+		live: Flag.Boolean("live").pipe(Flag.withDescription("Stream the desktop, criteria and steps to a local page while the run goes (on by default; --no-live turns it off)"), Flag.withDefault(true)),
 		memoryGb: Flag.Int("memory-gb").pipe(Flag.withDefault(4)),
 		cpus: Flag.Int("cpus").pipe(Flag.withDefault(2)),
 		runsDir: Flag.String("runs-dir").pipe(Flag.withDefault("runs")),
@@ -68,8 +68,10 @@ const run = Command.make(
 		const live = f.live ? Option.some(yield* startLive()) : Option.none()
 		if (Option.isSome(live)) {
 			yield* Console.log(`live view: ${live.value.url}`)
+			// Open the page for whoever started the run (a person or an agent), never in CI.
 			const noOpen = yield* Config.Boolean("WITNESS_NO_OPEN").pipe(Config.withDefault(false))
-			if (!noOpen) yield* ChildProcessSpawner.ChildProcessSpawner.use((s) => s.exitCode(ChildProcess.make(process.platform === "darwin" ? "open" : "xdg-open", [live.value.url]))).pipe(Effect.ignore)
+			const ci = yield* Config.Boolean("CI").pipe(Config.withDefault(false))
+			if (!noOpen && !ci) yield* ChildProcessSpawner.ChildProcessSpawner.use((s) => s.exitCode(ChildProcess.make(process.platform === "darwin" ? "open" : "xdg-open", [live.value.url]))).pipe(Effect.ignore)
 		}
 		const layers = runLayer(runsDir, undefined, Option.match(live, { onNone: () => undefined, onSome: (l) => l.publish }))
 		const options = {
