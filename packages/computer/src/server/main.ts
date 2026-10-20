@@ -6,12 +6,12 @@ import { NodeHttpServer, NodeRuntime, NodeServices } from "@effect/platform-node
 import { Config, Effect, Layer } from "effect"
 import { HttpRouter } from "effect/http"
 import { createServer } from "node:http"
-import { Artifacts } from "./Artifacts.ts"
-import { Browser, ChromeLive } from "./Browser.ts"
-import { Display } from "./Display.ts"
-import { Exec } from "./Exec.ts"
-import { Recorder } from "./Recorder.ts"
-import { RoutesLive } from "./Routes.ts"
+import { Artifacts } from "./artifacts.ts"
+import { Browser, ChromeLive } from "./browser.ts"
+import { Display } from "./display.ts"
+import { Exec } from "./exec.ts"
+import { Recorder } from "./recorder.ts"
+import { RoutesLive } from "./routes.ts"
 
 const ServicesLive = Layer.mergeAll(Display.layer, Browser.layer, Exec.layer, Recorder.layer, ChromeLive).pipe(
 	Layer.provideMerge(Artifacts.layer),

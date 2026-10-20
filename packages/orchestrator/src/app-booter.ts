@@ -5,7 +5,7 @@
 import type { Computer } from "@witness/computer"
 import type { WitnessConfig } from "@witness/domain"
 import { Clock, Context, Effect, Layer, Schema } from "effect"
-import { CurrentRun } from "./CurrentRun.ts"
+import { CurrentRun } from "./current-run.ts"
 import { chownTar } from "./tar.ts"
 
 export const APP_DIR = "/home/qa/app"

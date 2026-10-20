@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Option } from "effect"
-import { newReportId } from "../src/Api.ts"
-import { contentTypeOf, parseRange } from "../src/Storage.ts"
+import { newReportId } from "../src/api.ts"
+import { contentTypeOf, parseRange } from "../src/storage.ts"
 
 describe("parseRange", () => {
 	it("handles open, closed and suffix ranges", () => {

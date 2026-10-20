@@ -2,8 +2,8 @@
 // decoded with the shared protocol schemas.
 import { Effect, Option, Schema } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
-import type { Computer } from "./Computer.ts"
-import { ControlError } from "./Computer.ts"
+import type { Computer } from "./computer.ts"
+import { ControlError } from "./computer.ts"
 import {
 	ErrorBody,
 	EvaluateResult,

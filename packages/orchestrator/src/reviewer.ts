@@ -5,9 +5,9 @@ import type Anthropic from "@anthropic-ai/sdk"
 import type { ConsoleMessage, NetworkEvent } from "@witness/computer"
 import { aggregateOverall, type CriterionStatus, type Plan, redact, type Step, Verdict, VerdictCriterion, ConsoleError, NetworkError, Usage } from "@witness/domain"
 import { Context, Effect, Layer, Option, Schema } from "effect"
-import { CurrentRun } from "./CurrentRun.ts"
-import type { CriterionResult, ExecuteResult } from "./Executor.ts"
-import { Model, type Usage as ModelUsage } from "./Model.ts"
+import { CurrentRun } from "./current-run.ts"
+import type { CriterionResult, ExecuteResult } from "./executor.ts"
+import { Model, type Usage as ModelUsage } from "./model.ts"
 
 export const ReviewOutput = Schema.Struct({
 	criteria: Schema.Array(

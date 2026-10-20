@@ -5,9 +5,9 @@ import { ReportApi } from "@witness/domain"
 import { Context, Effect, Layer, Option, Stream } from "effect"
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { HttpApiBuilder } from "effect/http-api"
-import { ReportsHandlers, UploadAuthLive } from "./Api.ts"
-import { notFoundPage, reportPage } from "./Page.ts"
-import { Bindings, ReportStore, ReportsRepo } from "./Storage.ts"
+import { ReportsHandlers, UploadAuthLive } from "./api.ts"
+import { notFoundPage, reportPage } from "./page.ts"
+import { Bindings, ReportStore, ReportsRepo } from "./storage.ts"
 
 export interface Env {
 	readonly MEDIA: R2Bucket

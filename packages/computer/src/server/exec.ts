@@ -3,11 +3,11 @@
 import { Context, Duration, Effect, Fiber, Layer, Option, Scope } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import type { ExecRequest, ExecResult } from "../protocol.ts"
-import { Artifacts } from "./Artifacts.ts"
-import { childEnv } from "./Browser.ts"
-import type { ArtifactPathError } from "./Errors.ts"
-import { ExecError } from "./Errors.ts"
-import { collectCapped } from "./Proc.ts"
+import { Artifacts } from "./artifacts.ts"
+import { childEnv } from "./browser.ts"
+import type { ArtifactPathError } from "./errors.ts"
+import { ExecError } from "./errors.ts"
+import { collectCapped } from "./proc.ts"
 
 const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
 

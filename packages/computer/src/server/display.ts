@@ -2,8 +2,8 @@
 import { Config, Context, Effect, Layer } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import type { Action, ShotOptions } from "../protocol.ts"
-import { DisplayError } from "./Errors.ts"
-import { runBytes, runText } from "./Proc.ts"
+import { DisplayError } from "./errors.ts"
+import { runBytes, runText } from "./proc.ts"
 
 export interface Shot {
 	readonly data: Uint8Array

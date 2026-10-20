@@ -1,7 +1,7 @@
 // Run artifacts: plan.json, steps.jsonl, verdict.json, walkthrough.json and the
 // manifest uploaded to the hosted viewer. Encoded shapes are the files on disk.
 import { Effect, Schema } from "effect"
-import { CriterionKind, CriterionStatus } from "./Ids.ts"
+import { CriterionKind, CriterionStatus } from "./ids.ts"
 
 export class Criterion extends Schema.Class<Criterion>("@witness/Criterion")({
 	id: Schema.String,

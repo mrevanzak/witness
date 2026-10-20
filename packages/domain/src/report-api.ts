@@ -2,8 +2,8 @@
 // client. Reports are unlisted: the 22-char id is the secret that grants viewing.
 import { Context, Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, HttpApiSecurity } from "effect/http-api"
-import { ReportId } from "./Ids.ts"
-import { ReportManifest } from "./Run.ts"
+import { ReportId } from "./ids.ts"
+import { ReportManifest } from "./run.ts"
 
 /** Uploaded file names are flat: `video-after.mp4`, `after-01-hub-js.png`. */
 export const ReportFileName = Schema.String.pipe(Schema.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/)))

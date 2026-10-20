@@ -4,10 +4,10 @@
 import { Config, Context, Effect, Exit, Layer, Option, Scope, SynchronizedRef } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import type { RecordingResult } from "../protocol.ts"
-import type { ArtifactPathError } from "./Errors.ts"
-import { RecordingError, RecordingStateError } from "./Errors.ts"
-import { Artifacts } from "./Artifacts.ts"
-import { runText } from "./Proc.ts"
+import type { ArtifactPathError } from "./errors.ts"
+import { RecordingError, RecordingStateError } from "./errors.ts"
+import { Artifacts } from "./artifacts.ts"
+import { runText } from "./proc.ts"
 
 interface Active {
 	readonly handle: ChildProcessSpawner.ChildProcessHandle

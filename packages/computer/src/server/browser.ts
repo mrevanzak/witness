@@ -4,7 +4,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import type { Browser as PwBrowser, Page } from "playwright-core"
 import { chromium } from "playwright-core"
 import { PageSnapshot, type ConsoleMessage, type NavigateResult, type NetworkEvent } from "../protocol.ts"
-import { BrowserError } from "./Errors.ts"
+import { BrowserError } from "./errors.ts"
 
 const CHROME_FLAGS = (w: number, h: number) => [
 	"--no-first-run",

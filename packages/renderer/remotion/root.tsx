@@ -1,5 +1,5 @@
 import { Composition } from "remotion";
-import { Polished, type PolishedProps } from "./Polished";
+import { Polished, type PolishedProps } from "./polished";
 
 const placeholder: PolishedProps = {
 	video: "computer/raw.mp4",

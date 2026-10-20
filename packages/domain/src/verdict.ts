@@ -1,4 +1,4 @@
-import type { CriterionStatus } from "./Ids.ts"
+import type { CriterionStatus } from "./ids.ts"
 
 /**
  * Overall verdict from per-criterion statuses (decided by code, not the model):

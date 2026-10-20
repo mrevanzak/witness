@@ -11,10 +11,10 @@ import { FetchHttpClient } from "effect/http"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { register } from "node:module"
 import { pathToFileURL } from "node:url"
-import { drive } from "./Drive.ts"
-import { startLive } from "./Live.ts"
-import { publish } from "./Publish.ts"
-import { upload } from "./Upload.ts"
+import { drive } from "./drive.ts"
+import { startLive } from "./live.ts"
+import { publish } from "./publish.ts"
+import { upload } from "./upload.ts"
 
 /** The CLI was used wrongly (missing task, bad walkthrough file). */
 class UsageError extends Schema.TaggedError<UsageError>()("UsageError", { message: Schema.String }) {}

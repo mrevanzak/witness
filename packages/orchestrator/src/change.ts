@@ -1,5 +1,5 @@
 import type { Option } from "effect"
-import type { RepoRef } from "./Git.ts"
+import type { RepoRef } from "./git.ts"
 
 /** What is being verified: the task, the code change, and repo context for the planner. */
 export interface Change {

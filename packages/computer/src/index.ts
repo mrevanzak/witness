@@ -1,4 +1,4 @@
 export * from "./protocol.ts"
-export * from "./Computer.ts"
-export { makeControlClient } from "./ControlClient.ts"
-export { DockerComputerProvider } from "./DockerProvider.ts"
+export * from "./computer.ts"
+export { makeControlClient } from "./control-client.ts"
+export { DockerComputerProvider } from "./docker-provider.ts"

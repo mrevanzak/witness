@@ -1,8 +1,8 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Plan } from "@witness/domain"
 import { Option } from "effect"
-import type { CriterionResult, ExecuteResult } from "../src/Executor.ts"
-import { buildVerdict, testerReview } from "../src/Reviewer.ts"
+import type { CriterionResult, ExecuteResult } from "../src/executor.ts"
+import { buildVerdict, testerReview } from "../src/reviewer.ts"
 
 const plan = new Plan({
 	summary: "s",

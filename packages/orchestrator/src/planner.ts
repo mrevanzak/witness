@@ -2,11 +2,11 @@
 // Everything from the repo is untrusted data.
 import { type CriterionKind, Plan, redact, type WitnessConfig } from "@witness/domain"
 import { Context, Effect, Layer, Option, Schema } from "effect"
-import type { Change } from "./Change.ts"
-import { CurrentRun } from "./CurrentRun.ts"
+import type { Change } from "./change.ts"
+import { CurrentRun } from "./current-run.ts"
 import { fitDiff } from "./diff-context.ts"
-import { Model } from "./Model.ts"
-import type { ModelBudgetExceeded, ModelError } from "./Model.ts"
+import { Model } from "./model.ts"
+import type { ModelBudgetExceeded, ModelError } from "./model.ts"
 
 /** The model could not produce a usable plan. */
 export class PlanInvalid extends Schema.TaggedError<PlanInvalid>()("PlanInvalid", {

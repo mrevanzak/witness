@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect } from "effect"
-import { parseSteps } from "../src/Steps.ts"
+import { parseSteps } from "../src/steps.ts"
 
 describe("parseSteps", () => {
 	it.effect("skips blank lines and sorts by time", () =>

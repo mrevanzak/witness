@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { END, START, placeSection, referencedMedia } from "../src/Publish.ts";
+import { END, START, placeSection, referencedMedia } from "../src/publish.ts";
 
 describe("placeSection", () => {
 	it("inserts above a bot footer", () => {

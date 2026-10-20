@@ -3,7 +3,7 @@
 // recording stops and its first-frame time t0 is known.
 import { redactDeep, Step } from "@witness/domain"
 import { Context, Effect, Layer, Option, Ref, Schema } from "effect"
-import { CurrentRun, type RunWriteError } from "./CurrentRun.ts"
+import { CurrentRun, type RunWriteError } from "./current-run.ts"
 
 export type StepInput = ConstructorParameters<typeof Step>[0]
 

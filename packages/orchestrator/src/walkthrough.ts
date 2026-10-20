@@ -11,10 +11,10 @@
 import type { Computer, PageElement } from "@witness/computer"
 import { type CriterionKind, type CriterionStatus, Plan, redact, Still, WalkthroughReport, type WitnessConfig } from "@witness/domain"
 import { Clock, Context, Effect, Option, Ref, Schedule, Schema } from "effect"
-import type { Change } from "./Change.ts"
-import { CurrentRun } from "./CurrentRun.ts"
-import type { CriterionResult, ExecuteResult } from "./Executor.ts"
-import { Steps } from "./Steps.ts"
+import type { Change } from "./change.ts"
+import { CurrentRun } from "./current-run.ts"
+import type { CriterionResult, ExecuteResult } from "./executor.ts"
+import { Steps } from "./steps.ts"
 
 /** A walkthrough step could not be carried out (element missing, wait timed out, page call failed). */
 export class WalkthroughStepFailed extends Schema.TaggedError<WalkthroughStepFailed>()("WalkthroughStepFailed", {

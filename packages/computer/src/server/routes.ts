@@ -10,12 +10,12 @@ import {
 	ShotHeaders,
 	ShotOptions,
 } from "../protocol.ts"
-import { Artifacts } from "./Artifacts.ts"
-import { Browser } from "./Browser.ts"
-import { Display } from "./Display.ts"
-import { BadRequestError, UnauthorizedError } from "./Errors.ts"
-import { Exec } from "./Exec.ts"
-import { Recorder } from "./Recorder.ts"
+import { Artifacts } from "./artifacts.ts"
+import { Browser } from "./browser.ts"
+import { Display } from "./display.ts"
+import { BadRequestError, UnauthorizedError } from "./errors.ts"
+import { Exec } from "./exec.ts"
+import { Recorder } from "./recorder.ts"
 
 const STATUS: Record<string, number> = {
 	UnauthorizedError: 401,

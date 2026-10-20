@@ -7,9 +7,9 @@ import type { Computer, ConsoleMessage, NetworkEvent, PageElement, Screenshot, S
 import { SCREEN_W } from "@witness/computer"
 import { type CriterionStatus, type Plan, redact, type StoppedBecause, type WitnessConfig } from "@witness/domain"
 import { Clock, Context, Effect, Layer, Option, Ref } from "effect"
-import { CurrentRun } from "./CurrentRun.ts"
-import { Model } from "./Model.ts"
-import { Steps } from "./Steps.ts"
+import { CurrentRun } from "./current-run.ts"
+import { Model } from "./model.ts"
+import { Steps } from "./steps.ts"
 import { actionSignature, StuckDetector } from "./stuck.ts"
 
 type MessageParam = Anthropic.Beta.Messages.BetaMessageParam

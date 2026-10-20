@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { buildTools } from "../src/Executor.ts"
+import { buildTools } from "../src/executor.ts"
 
 describe("buildTools", () => {
 	it("defines strict schemas with every property required", () => {

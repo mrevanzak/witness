@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect } from "effect"
-import { normalizePlan } from "../src/Planner.ts"
+import { normalizePlan } from "../src/planner.ts"
 
 const c = (kind: "feature" | "regression", id = "X") => ({ id, kind, description: "d", how_to_check: "h", evidence: "e" })
 

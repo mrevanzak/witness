@@ -3,7 +3,7 @@ import { ReportApi, ReportFileRejected, ReportId, ReportNotFound, UploadAuth, Up
 import { Effect, Layer, Option, Redacted, Schema } from "effect"
 import { HttpApiBuilder } from "effect/http-api"
 import { HttpServerRequest } from "effect/http"
-import { Bindings, ReportStore, ReportsRepo } from "./Storage.ts"
+import { Bindings, ReportStore, ReportsRepo } from "./storage.ts"
 
 const MAX_FILE_BYTES = 95 * 1024 * 1024
 

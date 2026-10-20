@@ -1,6 +1,6 @@
 // /artifacts: the only directory the control server reads or writes for callers.
 import { Context, Effect, FileSystem, Layer, Path } from "effect"
-import { ArtifactNotFoundError, ArtifactPathError } from "./Errors.ts"
+import { ArtifactNotFoundError, ArtifactPathError } from "./errors.ts"
 
 export const ARTIFACTS = "/artifacts"
 
