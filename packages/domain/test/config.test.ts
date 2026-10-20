@@ -68,6 +68,18 @@ describe("parseWitnessConfig", () => {
 		failsWith("start: x\nurl: http://localhost:3000\nevidence: slack\n", "ConfigInvalidError", /evidence/)
 	)
 
+	it.effect("animates the video unless animation is false", () =>
+		Effect.gen(function* () {
+			const byDefault = yield* parseWitnessConfig("start: x\nurl: http://localhost:3000\n")
+			assert.isTrue(byDefault.animation)
+			const off = yield* parseWitnessConfig("start: x\nurl: http://localhost:3000\nanimation: false\n")
+			assert.isFalse(off.animation)
+		})
+	)
+	it.effect("rejects a non-boolean animation", () =>
+		failsWith("start: x\nurl: http://localhost:3000\nanimation: sometimes\n", "ConfigInvalidError", /animation/)
+	)
+
 	it.effect("records before and after unless states says after", () =>
 		Effect.gen(function* () {
 			const byDefault = yield* parseWitnessConfig("start: x\nurl: http://localhost:3000\n")

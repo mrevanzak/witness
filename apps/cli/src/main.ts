@@ -15,7 +15,7 @@ import {
 	writeComparisonReport,
 	writeRunReport,
 } from "@witness/orchestrator"
-import { type Layout, renderRun } from "@witness/renderer"
+import { type Layout, type RenderSettings, renderRun } from "@witness/renderer"
 import { Config, Console, Effect, FileSystem, Layer, Option, Path, Schema } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 import { FetchHttpClient } from "effect/http"
@@ -217,23 +217,34 @@ const run = Command.make(
 	}, Effect.scoped)
 ).pipe(Command.withDescription("Verify a change: boot it in a fresh computer, check it, record it, write a verdict"))
 
-/** The run repo's `evidence` setting (its working-tree witness.yaml), else pr. */
-const layoutForRun = Effect.fnUntraced(function* (runDir: string) {
+/** The run repo's `evidence` and `animation` settings (its working-tree witness.yaml), else pr and animated. */
+const settingsForRun = Effect.fnUntraced(function* (runDir: string) {
 	const fs = yield* FileSystem.FileSystem
 	const path = yield* Path.Path
-	const evidence = yield* fs.readFileString(path.join(runDir, "run.json")).pipe(
+	const config = yield* fs.readFileString(path.join(runDir, "run.json")).pipe(
 		Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(RunInfo))),
 		Effect.flatMap((info) => fs.readFileString(path.join(info.repo, info.prefix, "witness.yaml"))),
 		Effect.flatMap(parseWitnessConfig),
-		Effect.map((c) => c.evidence),
-		Effect.orElseSucceed(() => Option.none<Layout>())
+		Effect.option
 	)
-	return Option.getOrElse(evidence, (): Layout => "pr")
+	return {
+		animate: Option.match(config, { onNone: () => true, onSome: (c) => c.animation }),
+		layout: Option.getOrElse(
+			Option.flatMap(config, (c) => c.evidence),
+			(): Layout => "pr"
+		),
+	} satisfies RenderSettings
 })
 
 const render = Command.make(
 	"render",
 	{
+		animation: Flag.Boolean("animation").pipe(
+			Flag.withDescription(
+				"Zoom on each action, glide the cursor and ripple clicks; --no-animation plays the recording as captured. Default: witness.yaml `animation`, else on"
+			),
+			Flag.optional
+		),
 		label: Flag.String("label").pipe(
 			Flag.withDescription('Header label, e.g. "after" (a run with a before/ run is labelled before and after)'),
 			Flag.optional
@@ -246,16 +257,19 @@ const render = Command.make(
 		),
 		runDir: Argument.String("run-dir"),
 	},
-	Effect.fn(function* ({ runDir, label, layout }) {
-		const chosen = Option.isSome(layout) ? layout.value : yield* layoutForRun(runDir)
+	Effect.fn(function* ({ runDir, label, layout, animation }) {
+		const defaults = yield* settingsForRun(runDir)
+		const chosen = Option.getOrElse(layout, () => defaults.layout)
+		const animate = Option.getOrElse(animation, () => defaults.animate)
 		const one = Effect.fnUntraced(function* (dir: string, header: Option.Option<string>) {
 			const r = yield* renderRun(dir, {
+				animate,
 				layout: chosen,
 				...Option.match(header, { onNone: () => ({}), onSome: (l) => ({ label: l }) }),
 			})
 			yield* Console.log(
 				[
-					`${r.polished} (${r.durationSec.toFixed(1)} s, ${r.layout} layout)`,
+					`${r.polished} (${r.durationSec.toFixed(1)} s, ${r.layout} layout${r.animate ? "" : ", no animation"})`,
 					r.gif,
 					...Option.toArray(r.captions),
 				].join("\n")

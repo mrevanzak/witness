@@ -24,6 +24,8 @@ export type CriterionIn = {
 }
 
 export type TimelineOptions = {
+	/** Camera zoom/pan, the cursor and click ripples; off, the recording plays as captured. */
+	animate: boolean
 	endCardSec: number
 	fps: number
 	freezeSec: number
@@ -35,6 +37,7 @@ export type TimelineOptions = {
 }
 
 export const DEFAULTS: TimelineOptions = {
+	animate: true,
 	endCardSec: 3.5,
 	fps: 30,
 	freezeSec: 1.4,
@@ -308,7 +311,7 @@ export function buildTimeline(input: {
 	const o = { ...DEFAULTS, ...input.options }
 	const steps = [...input.steps].filter((s) => Number.isFinite(s.t)).sort((a, b) => a.t - b.t)
 	const dur = input.sourceDuration
-	const pts = focusPoints(steps, o.screen)
+	const pts = o.animate ? focusPoints(steps, o.screen) : []
 	const zoom = zoomKeys(pts, o)
 	const byId = new Map(input.criteria.map((c) => [c.id, c]))
 
@@ -394,7 +397,7 @@ export function buildTimeline(input: {
 	const cursor: CursorKey[] = pts.map((p) => ({ t: p.t, x: p.x, y: p.y }))
 	const cursorVisible = mergeWindows(pts.map((p) => [p.t - 0.8, p.t + 2.0] as [number, number]))
 	const clicks = steps
-		.filter((s) => CLICK.has(s.tool) && s.x != null && s.y != null)
+		.filter((s) => o.animate && CLICK.has(s.tool) && s.x != null && s.y != null)
 		.map((s) => ({ t: s.t, x: s.x!, y: s.y! }))
 
 	const labelled = steps.filter(

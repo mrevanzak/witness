@@ -16,7 +16,7 @@ Cursor's cloud agents were the inspiration. They test their own work and attach 
 | Output | What it is |
 |---|---|
 | `verdict.json` | pass, fail or blocked for each criterion, with timestamps into the recording and an explanation |
-| `polished.mp4` | a 30 to 60 second video: zooms on each click, captions, a checklist that fills in, a freeze on every failure |
+| `polished.mp4` | a 30 to 60 second video: zooms on each click (unless `animation: false`), captions, a checklist that fills in, a freeze on every failure |
 | `report.md` | a "Manual verification" section with captioned stills, ready for a PR description |
 | a hosted report | an unlisted page with the video, criteria you can click to jump to, stills and logs |
 | a live view | while it runs, a local page that streams the desktop next to the checklist |
@@ -129,6 +129,7 @@ login:                                     # optional test account
 timeouts: { setup: 900, boot: 180 }
 evidence: hosted                           # or pr: where `publish` puts screenshots and video
 states: before-after                       # or after: also check the base commit (the default), or only the change
+animation: false                           # default true: zoom on each action, glide the cursor, ripple clicks
 ```
 
 A config passed with `--config` can also stage files from your machine into the app (`files`) and load secret env from a file (`secret_env`). Witness redacts those values from every log, step, transcript and report. A `witness.yaml` inside the repo under test cannot do either.
@@ -140,7 +141,7 @@ A config passed with `--config` can also stage files from your machine into the 
 | `witness init` | draft a `witness.yaml` for an app Witness hasn't run before, and choose where evidence is published |
 | `witness run` | verify a ref: boot, check, record, write the verdict, after checking the base commit the same way (`--session`, `--walkthrough`, `--states`, `--parallel`, `--boot-only`, `--keep`, `--no-live`) |
 | `witness act <action>` | send one recorded action to a `--session` run (`click-ref`, `type`, `begin`, `end`, `still`, `finish`, …) |
-| `witness render <run>` | render `polished.mp4` and `preview.gif` (for the run and its `before/`). With `evidence: hosted` (or `--layout hosted`) the app fills the frame and captions go to `captions.vtt`, since the report page shows the criteria |
+| `witness render <run>` | render `polished.mp4` and `preview.gif` (for the run and its `before/`). With `evidence: hosted` (or `--layout hosted`) the app fills the frame and captions go to `captions.vtt`, since the report page shows the criteria. `animation: false` (or `--no-animation`) keeps the camera still: no zoom, cursor or click ripples |
 | `witness report <run>` | write `report.md`, a before/after report when the run has a `before/` |
 | `witness compare <before> <after> --out <dir>` | a before/after report folder |
 | `witness upload <run> [<after-run>]` | publish a hosted report (with the run's `before/`, or the two runs given), print its URL and write `hosted-section.md` for the PR |
