@@ -1,5 +1,7 @@
 // `witness upload`: publish a run (or a before/after pair) as a hosted report on
 // the Witness Worker (R2 + D1) and print its unlisted URL.
+// It also writes hosted-section.md in the (last) run dir: a short "## Manual
+// verification" that links the page, ready for `witness publish --report`.
 // Config: WITNESS_REPORTS_URL (the Worker's origin), WITNESS_UPLOAD_TOKEN.
 import {
 	ReportApi,
@@ -28,6 +30,42 @@ const readJson = <A, I>(file: string, schema: Schema.Codec<A, I>) =>
 		}
 		return Option.some(yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(yield* fs.readFileString(file)))
 	})
+
+const ICON: Record<string, string> = { blocked: "⚠️", fail: "❌", pass: "✅" }
+const mmss = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`
+const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\n/g, " ")
+
+/** The PR section for a hosted report: verdict, criteria and a link; media stay on the page. Pure. */
+export const hostedSection = (m: ReportManifest, url: string): string => {
+	const main = m.sections[0]!
+	const out = ["## Manual verification"]
+	if (m.preview) {
+		out.push(`Preview: ${m.preview}`)
+	}
+	if (main.gif) {
+		out.push(`[![Walkthrough preview](${url}/${main.gif})](${url})`)
+	}
+	// A before/after names each verdict; a single run doesn't need its "run" label.
+	const many = m.sections.length > 1
+	const verdicts = m.sections.map(
+		(s) => `${many && s.label ? `${s.label}: ` : ""}${ICON[s.verdict.overall] ?? ""} **${s.verdict.overall}**`
+	)
+	out.push(`${verdicts.join(" · ")} · [Full report: video, stills and logs](${url})`)
+	out.push(
+		[
+			"| Result | Criterion | Video | What was seen |",
+			"|---|---|---|---|",
+			...main.verdict.criteria.map((c) => {
+				const at = main.seek[c.id]
+				return `| ${ICON[c.status] ?? ""} ${c.status} | ${c.id}${c.kind === "regression" ? " (regression)" : ""} ${cell(c.description)} | ${at ? `${mmss(at[0])}–${mmss(at[1])}` : "–"} | ${cell(c.explanation)} |`
+			}),
+		].join("\n")
+	)
+	if (m.notes.length) {
+		out.push(m.notes.map((n) => `- ${n}`).join("\n"))
+	}
+	return `${out.join("\n\n")}\n`
+}
 
 type Upload = {
 	readonly name: string
@@ -170,6 +208,9 @@ export const upload = Effect.fn("upload")(function* (o: {
 		yield* Console.error(`  ${r.name} (${(r.bytes / 1024).toFixed(0)} KB)`)
 	}
 	const done = yield* client.reports.finalize({ params: { id: created.id } })
+	const section = path.join(path.resolve(o.runs.at(-1)!.dir), "hosted-section.md")
+	yield* fs.writeFileString(section, hostedSection(manifest, done.url))
+	yield* Console.error(`PR section: ${section} (witness publish --report it)`)
 	yield* Console.log(done.url)
 	return done.url
 })

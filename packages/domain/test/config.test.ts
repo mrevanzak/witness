@@ -56,6 +56,18 @@ describe("parseWitnessConfig", () => {
 		})
 	)
 
+	it.effect("reads the evidence destination", () =>
+		Effect.gen(function* () {
+			const c = yield* parseWitnessConfig("start: x\nurl: http://localhost:3000\nevidence: hosted\n")
+			assert.deepStrictEqual(c.evidence, Option.some("hosted"))
+			const none = yield* parseWitnessConfig("start: x\nurl: http://localhost:3000\n")
+			assert.isTrue(Option.isNone(none.evidence))
+		})
+	)
+	it.effect("rejects an unknown evidence destination", () =>
+		failsWith("start: x\nurl: http://localhost:3000\nevidence: slack\n", "ConfigInvalidError", /evidence/)
+	)
+
 	it.effect("rejects invalid YAML", () => failsWith("start: [unclosed", "ConfigParseError", /not valid YAML/))
 	it.effect("requires url", () => failsWith("start: x", "ConfigInvalidError", /url/))
 	it.effect("requires start", () => failsWith("url: http://a", "ConfigInvalidError", /start/))

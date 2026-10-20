@@ -46,11 +46,16 @@ export const Login = Schema.Struct({
 })
 export type Login = typeof Login.Type
 
+/** Where published evidence goes: media in the PR itself, or a hosted report linked from the PR. */
+export const EvidenceDestination = Schema.Literals(["pr", "hosted"])
+export type EvidenceDestination = typeof EvidenceDestination.Type
+
 const Seconds = Schema.Finite.pipe(Schema.check(Schema.isGreaterThan(0)))
 
 /** The file shape (snake_case keys, as written in YAML). */
 const ConfigFile = Schema.Struct({
 	env: EnvMap.pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+	evidence: Schema.optionalKey(EvidenceDestination),
 	files: Schema.Record(Schema.String, NonEmpty)
 		.check(
 			Schema.makeFilter((files) =>
@@ -77,6 +82,7 @@ const ConfigFile = Schema.Struct({
 export const WitnessConfig = Schema.Struct({
 	/** Env for setup/start (secret env is merged in by the orchestrator). */
 	env: Schema.Record(Schema.String, Schema.String),
+	evidence: Schema.Option(EvidenceDestination),
 	/** Host files staged into the app before setup. Only honoured from a verifier-side config. */
 	files: Schema.Record(Schema.String, Schema.String),
 	/** Defaults to `url`. */
@@ -104,6 +110,7 @@ const ConfigFromFile = ConfigFile.pipe(
 		SchemaTransformation.transform({
 			decode: (f) => ({
 				env: f.env,
+				evidence: Option.fromUndefinedOr(f.evidence),
 				files: f.files,
 				health: f.health ?? f.url,
 				login: Option.fromUndefinedOr(f.login),
@@ -125,6 +132,7 @@ const ConfigFromFile = ConfigFile.pipe(
 				files: c.files,
 				timeouts: { boot: c.timeouts.bootSec, setup: c.timeouts.setupSec },
 				...Option.match(c.secretEnv, { onNone: () => ({}), onSome: (secret_env) => ({ secret_env }) }),
+				...Option.match(c.evidence, { onNone: () => ({}), onSome: (evidence) => ({ evidence }) }),
 			}),
 		})
 	)

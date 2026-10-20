@@ -1,9 +1,10 @@
 // `witness init`: draft a witness.yaml from what the repo already declares
 // (lockfile, package scripts, Playwright's webServer, docker compose,
 // .env.example). The draft is a starting point; `witness run --boot-only`
-// proves it.
-import { parseEnvFile, parseWitnessConfig } from "@witness/domain"
-import { Console, Effect, FileSystem, Option, Path, Schema } from "effect"
+// proves it. It also asks where published evidence goes (`evidence`).
+import { type EvidenceDestination, parseEnvFile, parseWitnessConfig } from "@witness/domain"
+import { Config, Console, Effect, FileSystem, Option, Path, Schema } from "effect"
+import { Prompt } from "effect/cli"
 import { parse, stringify } from "yaml"
 
 export class InitError extends Schema.TaggedError<InitError>()("InitError", { message: Schema.String }) {}
@@ -320,10 +321,49 @@ export const readFacts = Effect.fn("readFacts")(function* (dir: string) {
 	} satisfies RepoFacts
 })
 
+/** The two places `witness publish` can put a report, as asked at init. */
+export const EVIDENCE_CHOICES: ReadonlyArray<{
+	readonly description: string
+	readonly title: string
+	readonly value: EvidenceDestination
+}> = [
+	{
+		description:
+			"Stills and the video are uploaded into the PR description (or a comment on someone else's PR). Needs an Ego browser signed in to GitHub.",
+		title: "GitHub PR",
+		value: "pr",
+	},
+	{
+		description:
+			"An unlisted report page (video with jump-to criteria, stills, logs); the PR gets a short summary that links to it. Needs WITNESS_REPORTS_URL and WITNESS_UPLOAD_TOKEN.",
+		title: "Hosted page",
+		value: "hosted",
+	},
+]
+
+const EVIDENCE_QUESTION = "Where should Witness publish evidence (screenshots and video)?"
+
+/** --evidence, else ask on a terminal; an agent or script must pass the flag. */
+const evidenceFor = Effect.fn("evidenceFor")(function* (flag: Option.Option<EvidenceDestination>) {
+	if (Option.isSome(flag)) {
+		return flag.value
+	}
+	if (!(process.stdin.isTTY && process.stdout.isTTY)) {
+		return yield* new InitError({
+			message: `${EVIDENCE_QUESTION} Pass --evidence:\n${EVIDENCE_CHOICES.map((c) => `  --evidence ${c.value.padEnd(6)}  ${c.title}: ${c.description}`).join("\n")}`,
+		})
+	}
+	return yield* Prompt.Select({
+		choices: EVIDENCE_CHOICES,
+		message: EVIDENCE_QUESTION,
+	}).pipe(Effect.mapError(() => new InitError({ message: "init cancelled" })))
+})
+
 export const init = Effect.fn("init")(function* (o: {
 	readonly repo: string
 	readonly out: Option.Option<string>
 	readonly force: boolean
+	readonly evidence: Option.Option<EvidenceDestination>
 }) {
 	const fs = yield* FileSystem.FileSystem
 	const path = yield* Path.Path
@@ -336,7 +376,17 @@ export const init = Effect.fn("init")(function* (o: {
 		return yield* new InitError({ message: `${out} already exists (use --force to overwrite)` })
 	}
 
-	const draft = draftConfig(yield* readFacts(repo))
+	const evidence = yield* evidenceFor(o.evidence)
+	const drafted = draftConfig(yield* readFacts(repo))
+	const draft: Draft = {
+		config: { ...drafted.config, evidence },
+		notes: [
+			...drafted.notes,
+			evidence === "pr"
+				? "`evidence: pr`: `witness publish` uploads stills and the video into the PR. Change it to `hosted` for a hosted report page."
+				: "`evidence: hosted`: `witness upload` makes a hosted report page and `witness publish` links it from the PR. Change it to `pr` to put the media in the PR itself.",
+		],
+	}
 	const text = renderDraft(draft)
 	// The draft must at least be a valid witness.yaml.
 	yield* parseWitnessConfig(text).pipe(
@@ -350,6 +400,15 @@ export const init = Effect.fn("init")(function* (o: {
 	yield* Console.log(`wrote ${shown}\n`)
 	for (const n of draft.notes) {
 		yield* Console.log(`- ${n}`)
+	}
+	if (evidence === "hosted") {
+		const reports = yield* Config.String("WITNESS_REPORTS_URL").pipe(Config.withDefault(""))
+		const token = yield* Config.String("WITNESS_UPLOAD_TOKEN").pipe(Config.withDefault(""))
+		if (!(reports && token)) {
+			yield* Console.log(
+				"- Hosted reports need WITNESS_REPORTS_URL and WITNESS_UPLOAD_TOKEN set; deploy the Worker first (README: Hosted reports on Cloudflare)."
+			)
+		}
 	}
 	yield* Console.log(`\nNext, prove it boots:\n  witness run --repo ${o.repo} --config ${shown} --boot-only`)
 	return out

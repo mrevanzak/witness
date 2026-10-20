@@ -81,7 +81,7 @@ pnpm witness init --repo ../my-app
 pnpm witness run --repo ../my-app --config ../my-app/witness.yaml --boot-only
 ```
 
-`init` reads the lockfile, package scripts, Playwright's `webServer`, docker compose and `.env.example`, writes `witness.yaml`, and lists what it guessed. `--boot-only` proves the app boots before you spend a real run on it. Commit the file to the repo, or keep it outside and pass `--config`. A full config looks like this:
+`init` reads the lockfile, package scripts, Playwright's `webServer`, docker compose and `.env.example`, writes `witness.yaml`, and lists what it guessed. It also asks where evidence gets published (`evidence`, see [Publishing evidence](#publishing-evidence)); pass `--evidence pr|hosted` when you're not at a terminal. `--boot-only` proves the app boots before you spend a real run on it. Commit the file to the repo, or keep it outside and pass `--config`. A full config looks like this:
 
 ```yaml
 setup:
@@ -98,6 +98,7 @@ login:                                     # optional test account
   email: qa@example.com
   password: qa-password                    # never shown to the model, never logged
 timeouts: { setup: 900, boot: 180 }
+evidence: hosted                           # or pr: where `publish` puts screenshots and video
 ```
 
 A config passed with `--config` can also stage files from your machine into the app (`files`) and load secret env from a file (`secret_env`). Witness redacts those values from every log, step, transcript and report. A `witness.yaml` inside the repo under test cannot do either.
@@ -106,15 +107,26 @@ A config passed with `--config` can also stage files from your machine into the 
 
 | Command | What it does |
 |---|---|
-| `witness init` | draft a `witness.yaml` for an app Witness hasn't run before |
+| `witness init` | draft a `witness.yaml` for an app Witness hasn't run before, and choose where evidence is published |
 | `witness run` | verify a ref: boot, check, record, write the verdict (`--walkthrough`, `--boot-only`, `--keep`, `--no-live`) |
 | `witness render <run>` | render `polished.mp4` and `preview.gif` |
 | `witness report <run>` | write `report.md` |
 | `witness compare <before> <after> --out <dir>` | a before/after report folder |
-| `witness upload <run> [<after-run>]` | publish a hosted report and print its URL |
+| `witness upload <run> [<after-run>]` | publish a hosted report, print its URL and write `hosted-section.md` for the PR |
 | `witness publish --pr <n> --report <file>` | put a report in your PR's description, or comment on someone else's PR |
 | `witness drive <run> <action>` | poke at a computer kept with `--keep` while you explore |
 | `witness cleanup` | remove computers and networks left behind by crashed runs |
+
+## Publishing evidence
+
+Stills and the video reach a PR in one of two ways. `witness init` asks which one, and the answer is stored as `evidence` in `witness.yaml`.
+
+| `evidence` | Where it lands | Commands | Needs |
+|---|---|---|---|
+| `pr` | stills and the video uploaded into the PR | `witness publish --pr <n> --report report.md --ego-space <id>` | an Ego browser signed in to GitHub |
+| `hosted` | an unlisted report page; the PR gets the verdict, the criteria table and a link | `witness upload <run> --pr <n>`, then `witness publish --pr <n> --report <run>/hosted-section.md` | the Worker below, `WITNESS_REPORTS_URL`, `WITNESS_UPLOAD_TOKEN` |
+
+`publish` writes into your own PR's description (between `<!-- witness:start/end -->`, replaced on re-runs) and comments on anyone else's. `--dry-run` shows what it would do.
 
 ## Hosted reports on Cloudflare
 

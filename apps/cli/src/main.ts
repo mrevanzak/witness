@@ -299,6 +299,12 @@ const uploadCmd = Command.make(
 const initCmd = Command.make(
 	"init",
 	{
+		evidence: Flag.Literals("evidence", ["pr", "hosted"]).pipe(
+			Flag.withDescription(
+				"Where `publish` puts evidence: pr (media in the PR) or hosted (a hosted report linked from the PR). Asked when omitted on a terminal"
+			),
+			Flag.optional
+		),
 		force: Flag.Boolean("force").pipe(Flag.withDescription("Overwrite an existing file"), Flag.withDefault(false)),
 		out: Flag.String("out").pipe(
 			Flag.withDescription("Where to write it (default: <repo>/witness.yaml)"),
@@ -314,7 +320,7 @@ const initCmd = Command.make(
 	})
 ).pipe(
 	Command.withDescription(
-		"Draft a witness.yaml from the repo's lockfile, scripts, Playwright webServer, docker compose and .env.example"
+		"Draft a witness.yaml from the repo's lockfile, scripts, Playwright webServer, docker compose and .env.example, and choose where evidence is published"
 	)
 )
 

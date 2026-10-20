@@ -23,7 +23,7 @@ git -C <repo> rev-parse HEAD                                                    
 
 - The repo has `witness.yaml` at the ref → use it.
 - Else `$WITNESS/local/<repo-name>/witness.yaml` (gitignored) → pass `--config`; run its `prepare.sh` first when present (it stages local dev keys, never hosted ones).
-- Else this is the app's first run. Draft one: `witness init --repo <repo> --out $WITNESS/local/<repo-name>/witness.yaml`. It reads the lockfile, package scripts, Playwright `webServer`, docker compose and `.env.example`, and lists what it guessed. Finish it from the repo's own QA docs and CI workflows: services the app needs, env values, a seeded `login`, local secrets in a `secret_env` file next to it. Then prove it with `witness run … --config <it> --boot-only --no-live` until it boots, and keep it.
+- Else this is the app's first run. First ask the user where evidence should be published, as its own clear question with both options (see step 6): **GitHub PR** (stills and video uploaded into the PR) or **Hosted page** (an unlisted report page; the PR gets a summary linking to it). Then draft: `witness init --repo <repo> --out $WITNESS/local/<repo-name>/witness.yaml --evidence pr|hosted`. Without `--evidence`, `init` prompts on a terminal and fails anywhere else, so always pass it. It reads the lockfile, package scripts, Playwright `webServer`, docker compose and `.env.example`, and lists what it guessed. Finish it from the repo's own QA docs and CI workflows: services the app needs, env values, a seeded `login`, local secrets in a `secret_env` file next to it. Then prove it with `witness run … --config <it> --boot-only --no-live` until it boots, and keep it.
 
 Heavy stacks (Next + CMS builds) need `--memory-gb 9 --cpus 6`.
 
@@ -59,12 +59,33 @@ For a before/after: `witness compare <beforeRun> <afterRun> --out <dir> --previe
 
 ## 6. Publish (only when asked)
 
+The config's `evidence` key says where evidence goes. If it is missing (an older config, or the repo's own `witness.yaml`), ask the user which of the two they want before publishing, and add the key to a config under `$WITNESS/local` so the next run doesn't ask again.
+
+| `evidence` | Where it lands | Needs |
+|---|---|---|
+| `pr` | Stills and the video uploaded into the PR | an Ego task space signed in to GitHub |
+| `hosted` | An unlisted report page (video with jump-to criteria, stills, logs); the PR gets the verdict, the criteria table and a link | `WITNESS_REPORTS_URL`, `WITNESS_UPLOAD_TOKEN` |
+
+**pr:**
+
 ```bash
 witness publish --pr <N> --report <report.md> --repo <repo> --dry-run
 witness publish --pr <N> --report <report.md> --repo <repo> --ego-space <id>
 ```
 
-Uploads media through the PR's comment box in Ego (signed in to GitHub) and swaps paths for `user-attachments` URLs. The current user's PR gets the section in its description between `<!-- witness:start/end -->` (replaced on re-runs, above bot footers); anyone else's PR gets a comment. Confirm with the user before the non-dry run; then open the PR and check each image loads and the video plays.
+Uploads media through the PR's comment box in Ego and swaps paths for `user-attachments` URLs.
+
+**hosted:**
+
+```bash
+witness upload <runDir> --pr <N> [--preview "…"]            # or: witness upload <beforeRun> <afterRun> --pr <N>
+witness publish --pr <N> --report <runDir>/hosted-section.md --repo <repo> --dry-run
+witness publish --pr <N> --report <runDir>/hosted-section.md --repo <repo>
+```
+
+`upload` prints the report URL and writes `hosted-section.md` (in the after run for a pair). That section links to the page instead of embedding local files, so `publish` needs no Ego. If the user only wants the link, give them the URL and stop there.
+
+Either way, the current user's PR gets the section in its description between `<!-- witness:start/end -->` (replaced on re-runs, above bot footers); anyone else's PR gets a comment. Confirm with the user before the non-dry run; then open the PR (and the hosted page) and check each image loads and the video plays.
 
 ## Guardrails
 
