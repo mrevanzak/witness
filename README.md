@@ -38,39 +38,58 @@ Try it on the demo app. `make-fixture.sh` creates a small repo with a correct an
 bash examples/todo-app/make-fixture.sh
 pnpm witness run --repo runs/fixtures/todo-app --ref feat/empty-title-broken --base main \
   --task "Empty todo titles show 'Title is required' and are not added" \
-  --walkthrough examples/todo-app/walkthrough.ts
+  --walkthrough examples/todo-app/walkthrough.spec.ts
 pnpm witness render runs/<run-id>
 pnpm witness report runs/<run-id>
 ```
 
 Each run opens a live view in your browser: the desktop as it happens, next to the checklist and the step log. Pass `--no-live` to skip it; CI never opens one. The run exits with 0 for pass, 1 for fail, 2 for blocked and 3 for usage errors, so it slots into scripts and CI.
 
-## Two ways to drive a run
+## Three ways to drive a run
+
+**Session mode** (`--session`) lets the coding agent you already use do the testing. `witness run --session` boots the app, starts recording and returns once the app is up. The agent then sends one action at a time with `witness act`, reads the screenshot each one returns, and records its verdicts. Every action goes through the same recorded tools as the other modes, so the video, captions, stills and verdict come out the same. No API key is needed; this is what the Claude Code skill uses.
+
+```bash
+pnpm witness run --repo runs/fixtures/todo-app --ref feat/empty-title-broken --base main \
+  --task "Empty todo titles show 'Title is required' and are not added" --session
+pnpm witness act criterion C1 feature "An empty title shows 'Title is required' and adds nothing"
+pnpm witness act begin C1
+pnpm witness act snapshot                                  # elements with refs and coordinates
+pnpm witness act click-ref e1 --label "Submit with an empty title"   # prints a screenshot path
+pnpm witness act still empty-title "The error shows, but a blank todo was added."
+pnpm witness act end C1 fail "Saw the error, but the counter went from 2 to 3."
+pnpm witness act finish                                    # prints the verdict, exits 0/1/2
+```
+
+A session with no command for 15 minutes closes itself and leaves its open criteria blocked.
 
 **Independent mode** is the default and needs `ANTHROPIC_API_KEY`. Witness asks Claude to plan two to six criteria from the task and the diff, including at least one regression check. A separate tester loop then works through them using screenshots, and a reviewer call checks each claimed result against the final screenshot, the console and the app log. The overall verdict is computed by code: any failure fails the run, anything unchecked blocks it.
 
-**Walkthrough mode** (`--walkthrough file.ts`) is for when a person or a coding session already knows the path. The file is an Effect program that declares criteria and drives the app through the same recorded tools.
+**Walkthrough mode** (`--walkthrough file.spec.ts`) runs a plain Playwright spec in the recorded desktop, for paths someone already knows. Each `test()` is a criterion and its Playwright result is the verdict; `test.step()` titles become the video's captions and attached screenshots become stills.
 
 ```ts
-import { Walkthrough } from "@witness/orchestrator"
-import { Effect } from "effect"
+import { expect, test } from "@playwright/test"
 
-export default Effect.gen(function* () {
-	const w = yield* Walkthrough
-	yield* w.criterion("C1", "feature", "An empty title shows 'Title is required'")
-	yield* w.begin("C1")
-	yield* w.clickText("Add todo", "Submit with an empty title")
-	const error = yield* w.evaluate<string>(`document.getElementById("title-error")?.textContent ?? ""`)
-	yield* w.still("empty-title", `After submitting an empty title, the form shows "${error}".`)
-	yield* w.end("C1", error.includes("Title is required") ? "pass" : "fail", `Saw "${error}".`)
+test("Submitting an empty title shows 'Title is required' and adds nothing", async ({ page }) => {
+	await page.goto("/")
+	await test.step("Submit with an empty title", async () => {
+		await page.getByRole("button", { name: "Add todo" }).click()
+	})
+	await test.info().attach("The form right after submitting an empty title.", {
+		body: await page.screenshot(),
+		contentType: "image/png",
+	})
+	await expect(page.locator("#title-error")).toHaveText("Title is required")
 })
 ```
 
-Walkthroughs are also how you get before and after comparisons. Run the same file against the base commit and the change, then `witness compare <before-run> <after-run> --out report/`.
+The spec can be one of the app's own e2e specs. It then runs from the source at the exact commit, with the app's own `playwright.config` and `@playwright/test`. Or it can be a file outside the repo, written for Witness. Witness keeps the config's projects and setup, runs one Chromium project headed on the recorded display, and ignores `webServer`, since the app is already running.
+
+Walkthroughs are also how you get before and after comparisons. Run the same spec against the base commit and the change, then `witness compare <before-run> <after-run> --out report/`.
 
 ## Using it from Claude Code
 
-`skills/witness` is a Claude Code skill. Link it into `~/.claude/skills/witness` and ask Claude to "verify PR 123" or run `/witness`. It picks the mode, boots the app, explores when it needs to, writes a walkthrough, renders the video and returns the report. It only touches the PR when you ask it to publish.
+`skills/witness` is a Claude Code skill. Link it into `~/.claude/skills/witness` and ask Claude to "verify PR 123" or run `/witness`. Claude boots the app in a session, plans the criteria from the diff, tests them itself while you watch in the live view, renders the video and returns the report. For before/after comparisons it writes the path as a Playwright spec and runs it on both refs. It only touches the PR when you ask it to publish.
 
 ## Telling Witness how to boot your app
 
@@ -108,7 +127,8 @@ A config passed with `--config` can also stage files from your machine into the 
 | Command | What it does |
 |---|---|
 | `witness init` | draft a `witness.yaml` for an app Witness hasn't run before, and choose where evidence is published |
-| `witness run` | verify a ref: boot, check, record, write the verdict (`--walkthrough`, `--boot-only`, `--keep`, `--no-live`) |
+| `witness run` | verify a ref: boot, check, record, write the verdict (`--session`, `--walkthrough`, `--boot-only`, `--keep`, `--no-live`) |
+| `witness act <action>` | send one recorded action to a `--session` run (`click-ref`, `type`, `begin`, `end`, `still`, `finish`, …) |
 | `witness render <run>` | render `polished.mp4` and `preview.gif` |
 | `witness report <run>` | write `report.md` |
 | `witness compare <before> <after> --out <dir>` | a before/after report folder |

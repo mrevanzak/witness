@@ -396,7 +396,9 @@ export function buildTimeline(input: {
 		.map((s) => ({ t: s.t, x: s.x!, y: s.y! }))
 
 	const labelled = steps.filter(
-		(s) => s.label && (POINTER.has(s.tool) || FOCUS.has(s.tool) || s.tool === "navigate" || s.tool === "wait")
+		(s) =>
+			s.label &&
+			(POINTER.has(s.tool) || FOCUS.has(s.tool) || s.tool === "navigate" || s.tool === "wait" || s.tool === "step")
 	)
 	const captions = labelled.map((s, k) => {
 		const next = labelled[k + 1]?.t ?? Number.POSITIVE_INFINITY

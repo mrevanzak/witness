@@ -10,7 +10,7 @@ import { Effect, Layer, PubSub, Ref, Stream } from "effect"
 import { HttpRouter, HttpServerResponse } from "effect/http"
 import { LIVE_PAGE } from "./live-page.ts"
 
-const freePort = Effect.callback<number>((resume) => {
+export const freePort = Effect.callback<number>((resume) => {
 	const srv = createNetServer()
 	srv.listen(0, "127.0.0.1", () => {
 		const address = srv.address()
