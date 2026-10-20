@@ -32,7 +32,7 @@ const program = Effect.gen(function* () {
 	)
 
 	const recStart = yield* Clock.currentTimeMillis
-	yield* computer.startRecording("raw.mkv")
+	yield* computer.startRecording
 	const nav = yield* computer.navigate("file:///artifacts/smoke.html")
 	if (nav.error) {
 		return yield* new SmokeFailed({ message: `navigate: ${nav.error}` })

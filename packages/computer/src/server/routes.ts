@@ -1,202 +1,105 @@
-// HTTP routes of the control server. Every route but /health needs the bearer token.
-import { Config, Effect, Layer, Redacted, Schema } from "effect"
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
+// Handlers of ControlApi. Every endpoint but /health needs the bearer token.
+import { createHash, timingSafeEqual } from "node:crypto"
+import { Config, Effect, Layer, Redacted } from "effect"
+import { HttpApiBuilder } from "effect/http-api"
+import { messageOf } from "../message.ts"
 import {
-	ActRequest,
-	EvaluateRequest,
-	ExecRequest,
-	NavigateRequest,
-	RecordStartRequest,
-	ShotHeaders,
-	ShotOptions,
+	ControlApi,
+	ControlAuth,
+	DISPLAY,
+	NotReadyError,
+	type Screenshot,
+	ServerError,
+	UnauthorizedError,
 } from "../protocol.ts"
 import { Artifacts } from "./artifacts.ts"
 import { Browser } from "./browser.ts"
 import { Display } from "./display.ts"
-import { BadRequestError, UnauthorizedError } from "./errors.ts"
 import { Exec } from "./exec.ts"
 import { Recorder } from "./recorder.ts"
 
-const STATUS: Record<string, number> = {
-	ArtifactNotFoundError: 404,
-	ArtifactPathError: 400,
-	BadRequestError: 400,
-	RecordingStateError: 409,
-	UnauthorizedError: 401,
-}
-
-const body = <A, I>(schema: Schema.Codec<A, I>) =>
-	HttpServerRequest.schemaBodyJson(schema).pipe(Effect.mapError((e) => new BadRequestError({ message: e.message })))
-
-const LogsQuery = Schema.Struct({
-	file: Schema.String.pipe(Schema.withDecodingDefaultKey(Effect.succeed("app.log"))),
-	tail: Schema.NumberFromString.pipe(Schema.withDecodingDefaultKey(Effect.succeed("200"))),
-})
-
-export const RoutesLive = Layer.unwrap(
+export const ControlAuthLive = Layer.effect(
+	ControlAuth,
 	Effect.gen(function* () {
-		const token = yield* Config.Redacted("CONTROL_TOKEN")
-		const expected = `Bearer ${Redacted.value(token)}`
+		// Compared as SHA-256 digests in constant time: equal lengths, and nothing to learn from timing.
+		const digest = (s: string) => createHash("sha256").update(s).digest()
+		const token = digest(Redacted.value(yield* Config.Redacted("CONTROL_TOKEN")))
+		return ControlAuth.of({
+			bearer: (httpEffect, { credential }) =>
+				timingSafeEqual(digest(Redacted.value(credential)), token)
+					? httpEffect
+					: Effect.fail(new UnauthorizedError({ message: "unauthorized" })),
+		})
+	})
+)
 
-		// Auth + error mapping for one route; typed failures become JSON with a status.
-		const route = <E extends { readonly _tag: string; readonly message: string }, R>(
-			method: "GET" | "POST",
-			path: `/${string}`,
-			handler: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>
-		) =>
-			HttpRouter.add(
-				method,
-				path,
-				Effect.gen(function* () {
-					const request = yield* HttpServerRequest.HttpServerRequest
-					if (request.headers.authorization !== expected) {
-						return yield* new UnauthorizedError({ message: "unauthorized" })
-					}
-					return yield* handler
-				}).pipe(
-					Effect.catch((e) =>
-						HttpServerResponse.json({ error: e.message, tag: e._tag }, { status: STATUS[e._tag] ?? 500 })
-					),
-					Effect.orDie
-				)
-			)
+export const StatusHandlers = HttpApiBuilder.group(
+	ControlApi,
+	"status",
+	Effect.fn(function* (handlers) {
+		const display = yield* Display
+		const recorder = yield* Recorder
+		const browser = yield* Browser
+		return handlers.handle("health", () =>
+			Effect.gen(function* () {
+				const [up, recording, connected] = yield* Effect.all([display.healthy, recorder.recording, browser.connected])
+				if (!up) {
+					return yield* new NotReadyError({ message: `display ${DISPLAY} is not up` })
+				}
+				return { browser: connected, recording }
+			})
+		)
+	})
+)
 
-		const shotResponse = (
-			shot: Effect.Effect<
-				{ data: Uint8Array; mime: string; width: number; height: number },
-				{ readonly _tag: string; readonly message: string },
-				Display
-			>,
+export const ControlHandlers = HttpApiBuilder.group(
+	ControlApi,
+	"control",
+	Effect.fn(function* (handlers) {
+		const artifacts = yield* Artifacts
+		const browser = yield* Browser
+		const display = yield* Display
+		const exec = yield* Exec
+		const recorder = yield* Recorder
+
+		/** A screenshot with the cursor position and the time it was taken. */
+		const withCursor = (
+			shot: Effect.Effect<Pick<Screenshot, "data" | "height" | "mime" | "width">, ServerError>,
 			actionAt?: number
 		) =>
-			Effect.gen(function* () {
-				const display = yield* Display
-				const [s, cursor] = yield* Effect.all([shot, display.cursor], { concurrency: 2 })
-				return HttpServerResponse.uint8Array(s.data, {
-					contentType: s.mime,
-					headers: {
-						[ShotHeaders.cursorX]: String(cursor.x),
-						[ShotHeaders.cursorY]: String(cursor.y),
-						[ShotHeaders.at]: String(Date.now()),
-						[ShotHeaders.width]: String(s.width),
-						[ShotHeaders.height]: String(s.height),
-						...(actionAt === undefined ? {} : { [ShotHeaders.actionAt]: String(actionAt) }),
-					},
-				})
-			})
-
-		return Layer.mergeAll(
-			HttpRouter.add(
-				"GET",
-				"/health",
-				Effect.gen(function* () {
-					const [ok, recording, browser] = yield* Effect.all([
-						Display.use((d) => d.healthy),
-						Recorder.use((r) => r.recording),
-						Browser.use((b) => b.connected),
-					])
-					return yield* HttpServerResponse.json({ browser, display: ":1", ok, recording }, { status: ok ? 200 : 503 })
-				}).pipe(Effect.orDie)
-			),
-			route(
-				"POST",
-				"/screenshot",
-				Effect.gen(function* () {
-					const options = yield* body(ShotOptions)
-					return yield* shotResponse(Display.use((d) => d.screenshot(options)))
-				})
-			),
-			route(
-				"POST",
-				"/act",
-				Effect.gen(function* () {
-					const req = yield* body(ActRequest)
-					const display = yield* Display
-					const at = Date.now()
-					yield* display.act(req.action)
-					if (req.action.type !== "wait") {
-						yield* Effect.sleep(`${req.settle_ms ?? 300} millis`)
-					}
-					return yield* shotResponse(display.screenshot(req.shot ?? {}), at)
-				})
-			),
-			route(
-				"POST",
-				"/exec",
-				Effect.gen(function* () {
-					const req = yield* body(ExecRequest)
-					return yield* HttpServerResponse.json(yield* Exec.use((x) => x.run(req)))
-				})
-			),
-			route(
-				"POST",
-				"/record/start",
-				Effect.gen(function* () {
-					const req = yield* body(RecordStartRequest)
-					return yield* HttpServerResponse.json(yield* Recorder.use((r) => r.start(req.path)))
-				})
-			),
-			route(
-				"POST",
-				"/record/stop",
-				Effect.flatMap(
-					Recorder.use((r) => r.stop),
-					(r) => HttpServerResponse.json(r)
-				)
-			),
-			route(
-				"POST",
-				"/browser/navigate",
-				Effect.gen(function* () {
-					const req = yield* body(NavigateRequest)
-					return yield* HttpServerResponse.json(
-						yield* Browser.use((b) => b.navigate(req.url, req.timeout_ms ?? 30_000))
-					)
-				})
-			),
-			route(
-				"POST",
-				"/browser/snapshot",
-				Effect.gen(function* () {
-					const req = yield* body(Schema.Struct({ max_text: Schema.optionalKey(Schema.Int) }))
-					return yield* HttpServerResponse.json(yield* Browser.use((b) => b.snapshot(req.max_text ?? 6000)))
-				})
-			),
-			route(
-				"POST",
-				"/browser/evaluate",
-				Effect.gen(function* () {
-					const req = yield* body(EvaluateRequest)
-					return yield* HttpServerResponse.json({ value: yield* Browser.use((b) => b.evaluate(req.expression)) })
-				})
-			),
-			route(
-				"POST",
-				"/browser/console",
-				Effect.flatMap(
-					Browser.use((b) => b.drainConsole),
-					(messages) => HttpServerResponse.json({ messages })
-				)
-			),
-			route(
-				"POST",
-				"/browser/network",
-				Effect.flatMap(
-					Browser.use((b) => b.drainNetwork),
-					(requests) => HttpServerResponse.json({ requests })
-				)
-			),
-			route(
-				"GET",
-				"/logs",
-				Effect.gen(function* () {
-					const q = yield* HttpServerRequest.schemaSearchParams(LogsQuery).pipe(
-						Effect.mapError((e) => new BadRequestError({ message: e.message }))
-					)
-					const tail = Math.max(1, Math.min(5000, Math.round(q.tail)))
-					return yield* HttpServerResponse.json(yield* Artifacts.use((a) => a.tail(q.file, tail)))
-				})
+			Effect.all([shot, display.cursor], { concurrency: 2 }).pipe(
+				Effect.map(([s, cursor]): Screenshot => ({ ...s, actionAt, at: Date.now(), cursor }))
 			)
-		)
+
+		return handlers.handleAll({
+			act: Effect.fn(function* ({ payload }) {
+				const at = Date.now()
+				yield* display.act(payload.action)
+				if (payload.action.type !== "wait") {
+					yield* Effect.sleep(`${payload.settle_ms ?? 300} millis`)
+				}
+				return yield* withCursor(display.screenshot(payload.shot ?? {}), at)
+			}),
+			console: () => browser.drainConsole,
+			evaluate: ({ payload }) =>
+				browser.evaluate(payload.expression).pipe(
+					Effect.flatMap((value) =>
+						Effect.try({
+							catch: (e) => new ServerError({ message: `evaluate: ${messageOf(e)}` }),
+							// As JSON (dates become strings); `undefined` has no JSON, so it stays absent.
+							try: () => (value === undefined ? {} : { value: JSON.parse(JSON.stringify(value)) as unknown }),
+						})
+					)
+				),
+			exec: ({ payload }) => exec.run(payload),
+			logs: ({ query }) => artifacts.tail(query.file, Math.max(1, Math.min(5000, Math.round(query.tail)))),
+			navigate: ({ payload }) => browser.navigate(payload.url, payload.timeout_ms ?? 30_000),
+			network: () => browser.drainNetwork,
+			screenshot: ({ payload }) => withCursor(display.screenshot(payload)),
+			snapshot: ({ payload }) => browser.snapshot(payload.max_text ?? 6000),
+			spawn: ({ payload }) => exec.spawn(payload),
+			startRecording: () => recorder.start,
+			stopRecording: () => recorder.stop,
+		})
 	})
 )

@@ -1,17 +1,26 @@
 // Screen recording: ffmpeg x11grab -> /artifacts/raw.mkv, stopped with SIGINT so the
-// file is finalised, then remuxed to .mp4. `-copyts` keeps x11grab's wall-clock pts,
-// so the first packet's pts is the exact capture time of the first frame (t0).
-import { Config, Context, Effect, Exit, Layer, Option, Scope, SynchronizedRef } from "effect"
+// file is finalised, then remuxed to raw.mp4. `-copyts` keeps x11grab's wall-clock
+// pts, so the first packet's pts is the exact capture time of the first frame (t0).
+import { Context, Duration, Effect, Exit, Layer, Option, Scope, SynchronizedRef } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
-import type { RecordingResult } from "../protocol.ts"
-import { Artifacts } from "./artifacts.ts"
-import type { ArtifactPathError } from "./errors.ts"
-import { RecordingError, RecordingStateError } from "./errors.ts"
+import { messageOf } from "../message.ts"
+import {
+	DISPLAY,
+	type RecordingResult,
+	RecordingStateError,
+	type RecordStartResult,
+	SCREEN,
+	ServerError,
+	SHUTDOWN_GRACE_SECONDS,
+} from "../protocol.ts"
+import { ARTIFACTS } from "./artifacts.ts"
 import { runText } from "./proc.ts"
 
+const MKV = `${ARTIFACTS}/raw.mkv`
+const MP4 = `${ARTIFACTS}/raw.mp4`
+
 type Active = {
-	readonly handle: ChildProcessSpawner.ChildProcessHandle
-	readonly mkv: string
+	/** Owns ffmpeg; closing it SIGINTs ffmpeg and waits until raw.mkv is finalised. */
 	readonly scope: Scope.Closeable
 	readonly startedAt: number
 }
@@ -19,10 +28,8 @@ type Active = {
 export class Recorder extends Context.Service<
 	Recorder,
 	{
-		start: (
-			path: string | undefined
-		) => Effect.Effect<{ mkv: string; startedAt: number }, RecordingStateError | RecordingError | ArtifactPathError>
-		readonly stop: Effect.Effect<RecordingResult, RecordingStateError | RecordingError>
+		readonly start: Effect.Effect<RecordStartResult, RecordingStateError | ServerError>
+		readonly stop: Effect.Effect<RecordingResult, RecordingStateError | ServerError>
 		readonly recording: Effect.Effect<boolean>
 	}
 >()("witness/computer/server/Recorder") {
@@ -30,64 +37,68 @@ export class Recorder extends Context.Service<
 		Recorder,
 		Effect.gen(function* () {
 			const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-			const artifacts = yield* Artifacts
-			const w = yield* Config.Int("SCREEN_WIDTH").pipe(Config.withDefault(1920))
-			const h = yield* Config.Int("SCREEN_HEIGHT").pipe(Config.withDefault(1080))
+			const layerScope = yield* Effect.scope
 			const state = yield* SynchronizedRef.make<Option.Option<Active>>(Option.none())
 			const provide = Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)
-			const failed = (what: string) => (e: unknown) =>
-				new RecordingError({ message: `${what}: ${e instanceof Error ? e.message : String(e)}` })
+			const failed = (what: string) => (e: unknown) => new ServerError({ message: `${what}: ${messageOf(e)}` })
 
-			const start = Effect.fn("Recorder.start")(function* (path: string | undefined) {
-				const mkv = yield* artifacts.resolve(path ?? "raw.mkv")
-				return yield* SynchronizedRef.modifyEffect(state, (current) =>
-					Effect.gen(function* () {
-						if (Option.isSome(current)) {
-							return yield* new RecordingStateError({ message: "already recording" })
-						}
-						// The process outlives this request: it lives in its own scope until stop.
-						const scope = yield* Scope.make()
-						const args = [
-							"-hide_banner",
-							"-loglevel",
-							"error",
-							"-nostdin",
-							"-f",
-							"x11grab",
-							"-draw_mouse",
-							"0",
-							"-framerate",
-							"30",
-							"-video_size",
-							`${w}x${h}`,
-							"-i",
-							":1",
-							"-copyts",
-							"-c:v",
-							"libx264",
-							"-preset",
-							"ultrafast",
-							"-crf",
-							"18",
-							"-pix_fmt",
-							"yuv420p",
-							"-y",
-							mkv,
-						]
-						const handle = yield* spawner
-							.spawn(ChildProcess.make("ffmpeg", args, { stderr: "ignore", stdin: "ignore", stdout: "ignore" }))
-							.pipe(Scope.provide(scope), Effect.mapError(failed("ffmpeg")))
-						const startedAt = Date.now()
-						const active: Active = { handle, mkv, scope, startedAt }
-						return [{ mkv, startedAt }, Option.some(active)] as const
-					})
-				)
-			})
+			const start = SynchronizedRef.modifyEffect(state, (current) =>
+				Effect.gen(function* () {
+					if (Option.isSome(current)) {
+						return yield* new RecordingStateError({ message: "already recording" })
+					}
+					// ffmpeg outlives this request: it lives in a child of the layer scope until stop (or shutdown).
+					const scope = yield* Scope.fork(layerScope)
+					const args = [
+						"-hide_banner",
+						"-loglevel",
+						"error",
+						"-nostdin",
+						"-f",
+						"x11grab",
+						"-draw_mouse",
+						"0",
+						"-framerate",
+						"30",
+						"-video_size",
+						`${SCREEN.width}x${SCREEN.height}`,
+						"-i",
+						DISPLAY,
+						"-copyts",
+						"-c:v",
+						"libx264",
+						"-preset",
+						"ultrafast",
+						"-crf",
+						"18",
+						"-pix_fmt",
+						"yuv420p",
+						"-y",
+						MKV,
+					]
+					yield* spawner
+						.spawn(
+							ChildProcess.make("ffmpeg", args, {
+								// Releasing the scope SIGINTs ffmpeg so it writes the trailer; SIGKILL only past the budget.
+								forceKillAfter: Duration.seconds(SHUTDOWN_GRACE_SECONDS),
+								killSignal: "SIGINT",
+								stderr: "ignore",
+								stdin: "ignore",
+								stdout: "ignore",
+							})
+						)
+						.pipe(
+							Scope.provide(scope),
+							Effect.tapError(() => Scope.close(scope, Exit.void)),
+							Effect.mapError(failed("ffmpeg"))
+						)
+					const startedAt = Date.now()
+					return [{ mkv: MKV, startedAt }, Option.some({ scope, startedAt })] as const
+				})
+			).pipe(Effect.withSpan("Recorder.start"))
 
 			const finish = Effect.fnUntraced(function* (active: Active) {
-				// SIGINT lets ffmpeg write the trailer; SIGKILL only if it ignores us for 5 s.
-				yield* active.handle.kill({ forceKillAfter: "5 seconds", killSignal: "SIGINT" }).pipe(Effect.ignore)
-				yield* active.handle.exitCode.pipe(Effect.ignore)
+				// Uninterruptible: raw.mkv is complete once this returns.
 				yield* Scope.close(active.scope, Exit.void)
 				const firstPts = yield* runText("ffprobe", [
 					"-v",
@@ -100,26 +111,25 @@ export class Recorder extends Context.Service<
 					"%+#1",
 					"-of",
 					"csv=p=0",
-					active.mkv,
+					MKV,
 				]).pipe(
 					provide,
 					Effect.mapError(failed("ffprobe")),
 					Effect.map((out) => Number.parseFloat(out.split("\n")[0] ?? ""))
 				)
 				const t0 = Number.isFinite(firstPts) && firstPts > 1e9 ? Math.round(firstPts * 1000) : null
-				const mp4 = active.mkv.replace(/\.mkv$/, ".mp4")
 				yield* runText("ffmpeg", [
 					"-hide_banner",
 					"-loglevel",
 					"error",
 					"-y",
 					"-i",
-					active.mkv,
+					MKV,
 					"-c",
 					"copy",
 					"-movflags",
 					"+faststart",
-					mp4,
+					MP4,
 				]).pipe(provide, Effect.mapError(failed("remux")))
 				const duration = yield* runText("ffprobe", [
 					"-v",
@@ -128,9 +138,9 @@ export class Recorder extends Context.Service<
 					"format=duration",
 					"-of",
 					"csv=p=0",
-					mp4,
+					MP4,
 				]).pipe(provide, Effect.mapError(failed("ffprobe")), Effect.map(Number.parseFloat))
-				return { duration, mkv: active.mkv, mp4, t0 } satisfies RecordingResult
+				return { duration, mkv: MKV, mp4: MP4, t0 } satisfies RecordingResult
 			})
 
 			const stop = SynchronizedRef.modifyEffect(state, (current) =>
@@ -143,15 +153,11 @@ export class Recorder extends Context.Service<
 				})
 			).pipe(Effect.withSpan("Recorder.stop"))
 
-			// On shutdown (docker stop), finalise a running recording instead of losing it.
+			// On shutdown (docker stop) ffmpeg's scope, a child of the layer scope, has
+			// already finalised raw.mkv by the time this runs; remux it as a stop would.
 			yield* Effect.addFinalizer(() =>
 				SynchronizedRef.get(state).pipe(
-					Effect.flatMap(
-						Option.match({
-							onNone: () => Effect.void,
-							onSome: () => stop.pipe(Effect.timeoutOption("2500 millis"), Effect.ignore),
-						})
-					)
+					Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: () => Effect.ignore(stop) }))
 				)
 			)
 

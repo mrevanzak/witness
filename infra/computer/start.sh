@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # PID 1 of the computer. Brings up the desktop in order (Xvfb, dbus + portals,
 # fluxbox, control server, optional VNC) and forwards SIGTERM/SIGINT so
-# `docker stop` returns in well under its 10 s grace period. The control server
-# owns Chromium and ffmpeg and stops them itself (ffmpeg with SIGINT, so the
-# recording is finalised).
+# `docker stop` returns within its grace. The control server owns Chromium and
+# ffmpeg and stops them itself (ffmpeg with SIGINT, so the recording is finalised).
+# Screen, display, port and timings match packages/computer/src/protocol.ts.
 set -uo pipefail
 
-W="${SCREEN_WIDTH:-1920}"
-H="${SCREEN_HEIGHT:-1080}"
+W=1920
+H=1080
 LOGS=/tmp/computer-logs
 mkdir -p "$LOGS"
 PIDS=()
@@ -17,8 +17,8 @@ shutdown() {
 	trap - TERM INT
 	if [ -n "$CONTROL_PID" ]; then
 		kill -TERM "$CONTROL_PID" 2>/dev/null
-		# Up to ~2.5 s for the control server to finalise a recording.
-		for _ in $(seq 1 25); do kill -0 "$CONTROL_PID" 2>/dev/null || break; sleep 0.1; done
+		# Up to 5 s (SHUTDOWN_GRACE_SECONDS + 2) to finalise and remux a recording.
+		for _ in $(seq 1 50); do kill -0 "$CONTROL_PID" 2>/dev/null || break; sleep 0.1; done
 	fi
 	for p in "${PIDS[@]}"; do kill -TERM "$p" 2>/dev/null; done
 	sleep 0.2
@@ -49,7 +49,7 @@ if [ "${ENABLE_VNC:-0}" = 1 ]; then
 	websockify --web /usr/share/novnc 0.0.0.0:6080 127.0.0.1:5900 >"$LOGS/novnc.log" 2>&1 & PIDS+=($!)
 fi
 
-echo "computer ready: display :1 ${W}x${H}, control on :${CONTROL_PORT:-7070}"
+echo "computer ready: display :1 ${W}x${H}, control on :7070"
 # `wait` returns early when a trapped signal arrives, then the trap runs.
 while kill -0 "$CONTROL_PID" 2>/dev/null; do wait "$CONTROL_PID"; done
 echo "control server exited"; tail -20 "$LOGS/control.log"

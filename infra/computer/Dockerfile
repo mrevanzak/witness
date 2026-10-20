@@ -1,12 +1,11 @@
 # The "computer": one throwaway Linux desktop per verification run.
 # Xvfb :1 -> fluxbox -> Chromium (CDP on 127.0.0.1:9222), recorded with ffmpeg,
-# driven through the control server on :7070.
+# driven through the control server on :7070. Display, screen size and port are
+# DISPLAY, SCREEN and CONTROL_PORT in packages/computer/src/protocol.ts.
 FROM node:22-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
 	DISPLAY=:1 \
-	SCREEN_WIDTH=1920 \
-	SCREEN_HEIGHT=1080 \
 	COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
 	PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
