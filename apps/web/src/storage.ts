@@ -26,6 +26,7 @@ const CONTENT_TYPES: Record<string, string> = {
 	json: "application/json",
 	mp4: "video/mp4",
 	png: "image/png",
+	vtt: "text/vtt; charset=utf-8",
 	webm: "video/webm",
 }
 export const contentTypeOf = (name: string) =>

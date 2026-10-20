@@ -2,22 +2,49 @@
 // run: computer/raw.mp4, steps.jsonl, verdict.json, run.json.
 
 import { createRequire } from "node:module"
-import { RunInfo, Step, Verdict } from "@witness/domain"
+import { EvidenceDestination, RunInfo, Step, Verdict } from "@witness/domain"
 import { Effect, FileSystem, Option, Path, Schema, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
-import { buildTimeline, type Timeline, type TimelineOptions } from "./timeline.ts"
+import { buildTimeline, captionCues, type Timeline, type TimelineOptions, webVtt } from "./timeline.ts"
 
 /** A render step (Remotion, ffmpeg, ffprobe) failed or the run is incomplete. */
 export class RenderError extends Schema.TaggedError<RenderError>()("RenderError", {
 	message: Schema.String,
 }) {}
 
+/**
+ * How the video is framed for where it is published. `pr`: the app beside the
+ * criteria rail, with captions, tape and a verdict card burned in (it plays
+ * alone in the PR). `hosted`: the app fills the frame; the report page shows the
+ * criteria and verdict, and captions ship as captions.vtt.
+ */
+export type Layout = EvidenceDestination
+
 export type RenderResult = {
+	readonly captions: Option.Option<string>
 	readonly durationSec: number
 	readonly gif: string
+	readonly layout: Layout
 	readonly polished: string
 	readonly timeline: Timeline
 }
+
+/** Timeline options a layout implies (the hosted cut has no verdict card). */
+export const layoutOptions = (layout: Layout): Partial<TimelineOptions> =>
+	layout === "hosted" ? { endCardSec: 0 } : {}
+
+const RenderedProps = Schema.Struct({ layout: Schema.optionalKey(EvidenceDestination) })
+
+/** The layout polished.mp4 was last rendered with, if it was rendered. */
+export const renderedLayout = Effect.fn("renderedLayout")(function* (runDir: string) {
+	const fs = yield* FileSystem.FileSystem
+	const path = yield* Path.Path
+	return yield* fs.readFileString(path.join(runDir, "render", "props.json")).pipe(
+		Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(RenderedProps))),
+		Effect.map((p) => p.layout ?? ("pr" as const)),
+		Effect.option
+	)
+})
 
 const HERE = new URL(".", import.meta.url).pathname
 const failed = (what: string) => (e: { readonly message: string }) =>
@@ -83,6 +110,7 @@ export const renderRun = Effect.fn("renderRun")(function* (
 	runDirIn: string,
 	opts: {
 		readonly label?: string
+		readonly layout?: Layout
 		readonly concurrency?: number
 		readonly onProgress?: (line: string) => Effect.Effect<void>
 	} = {}
@@ -95,14 +123,15 @@ export const renderRun = Effect.fn("renderRun")(function* (
 	if (!(yield* fs.exists(raw))) {
 		return yield* new RenderError({ message: `no recording at ${raw}` })
 	}
-	const timeline = yield* timelineForRun(runDir, yield* probeDuration(raw), undefined, opts.label)
+	const layout = opts.layout ?? "pr"
+	const timeline = yield* timelineForRun(runDir, yield* probeDuration(raw), layoutOptions(layout), opts.label)
 
 	const outDir = path.join(runDir, "render")
 	yield* fs.makeDirectory(outDir, { recursive: true })
 	const propsPath = path.join(outDir, "props.json")
 	yield* fs.writeFileString(
 		propsPath,
-		JSON.stringify({ timeline, title: timeline.end.title, video: "computer/raw.mp4" })
+		JSON.stringify({ layout, timeline, title: timeline.end.title, video: "computer/raw.mp4" })
 	)
 	yield* fs.writeFileString(path.join(outDir, "timeline.json"), JSON.stringify(timeline, null, 1))
 
@@ -172,5 +201,20 @@ export const renderRun = Effect.fn("renderRun")(function* (
 			])
 		)
 		.pipe(Effect.mapError(failed("preview.gif")))
-	return { durationSec: yield* probeDuration(polished), gif, polished, timeline } satisfies RenderResult
+
+	// Hosted captions are a track the page can toggle, not burned into the frame.
+	const vtt = path.join(runDir, "captions.vtt")
+	if (layout === "hosted") {
+		yield* fs.writeFileString(vtt, webVtt(captionCues(timeline))).pipe(Effect.mapError(failed("captions.vtt")))
+	} else {
+		yield* fs.remove(vtt, { force: true }).pipe(Effect.mapError(failed("captions.vtt")))
+	}
+	return {
+		captions: layout === "hosted" ? Option.some(vtt) : Option.none(),
+		durationSec: yield* probeDuration(polished),
+		gif,
+		layout,
+		polished,
+		timeline,
+	} satisfies RenderResult
 })

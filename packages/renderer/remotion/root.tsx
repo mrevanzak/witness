@@ -2,6 +2,7 @@ import { type CalculateMetadataFunction, Composition } from "remotion"
 import { Polished, type PolishedProps } from "./polished"
 
 const placeholder: PolishedProps = {
+	layout: "pr",
 	timeline: {
 		captions: [],
 		cards: [],
