@@ -38,7 +38,7 @@ export function timelineForRun(runDir: string, sourceDuration: number, options?:
 		explanation: c.explanation,
 		screenshot: c.screenshot,
 	}));
-	const title = String(runInfo.task ?? "Verification").split("\n")[0]!.slice(0, 110);
+	const title = String(runInfo.task ?? "Verification").split("\n")[0]!.replace(/^#+\s*/, "").slice(0, 110);
 	return buildTimeline({ steps, criteria, overall: verdict.overall, title, sourceDuration, options });
 }
 
