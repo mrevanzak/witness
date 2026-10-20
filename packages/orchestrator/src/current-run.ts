@@ -45,15 +45,15 @@ export class CurrentRun extends Context.Service<
 		writeBytes: (name: string, data: Uint8Array) => Effect.Effect<string, RunWriteError>
 	}
 >()("witness/orchestrator/CurrentRun") {
-	/** A new run directory under `runsDir`. */
-	static readonly layer = (runsDir: string, id?: string, publish: Publish = noPublish) =>
+	/** A new run directory under `runsDir`, named after the run unless `folder` is given. */
+	static readonly layer = (runsDir: string, id?: string, publish: Publish = noPublish, folder?: string) =>
 		Layer.effect(
 			CurrentRun,
 			Effect.gen(function* () {
 				const fs = yield* FileSystem.FileSystem
 				const path = yield* Path.Path
 				const runId = id ?? newRunId(new Date(yield* Clock.currentTimeMillis))
-				const dir = path.resolve(runsDir, runId)
+				const dir = path.resolve(runsDir, folder ?? runId)
 				const computerDir = path.join(dir, "computer")
 				yield* fs
 					.makeDirectory(computerDir, { recursive: true })

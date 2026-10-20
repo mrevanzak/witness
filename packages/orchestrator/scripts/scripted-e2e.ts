@@ -207,9 +207,12 @@ const program = Effect.gen(function* () {
 			keep: false,
 			memoryGb: 4,
 			mode: { _tag: "Agent" },
+			parallel: false,
 			ref: c.ref,
 			repo: fixture,
 			runsDir: path.join(root, "runs"),
+			// Verdict checks per branch: the change only, no before run.
+			states: Option.some("after"),
 			task: "Validate empty todo titles",
 		}).pipe(Effect.provide(runLayer(path.join(root, "runs")).agent))
 		const ok = outcome.overall === c.expect

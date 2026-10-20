@@ -1,8 +1,9 @@
 // report.md in the "## Manual verification" format: a Preview line, one caption
 // sentence above each still, the walkthrough video, notes. Media are ./relative
 // paths; `witness publish` or `witness upload` swaps them for hosted URLs.
-import { RunInfo, type Verdict, Verdict as VerdictSchema, WalkthroughReport } from "@witness/domain"
+import { BlockedVerdict, RunInfo, type Verdict, Verdict as VerdictSchema, WalkthroughReport } from "@witness/domain"
 import { Effect, FileSystem, Option, Path, Schema } from "effect"
+import { BEFORE_DIR } from "./verifier.ts"
 
 const ICON: Record<string, string> = { blocked: "⚠️", fail: "❌", pass: "✅" }
 
@@ -23,6 +24,48 @@ export const loadRun = Effect.fn("loadRun")(function* (runDir: string) {
 	const walk = yield* readJson(path.join(runDir, "walkthrough.json"), WalkthroughReport)
 	const info = yield* readJson(path.join(runDir, "run.json"), RunInfo)
 	return { info, verdict, walk }
+})
+
+/**
+ * The base commit's run recorded inside `runDir` (`states: before-after`), if any:
+ * its folder, and why it stopped when it never reached a verdict.
+ */
+export const beforeRun = Effect.fn("beforeRun")(function* (runDir: string) {
+	const path = yield* Path.Path
+	const dir = path.join(runDir, BEFORE_DIR)
+	const file = path.join(dir, "verdict.json")
+	const verdict = yield* readJson(file, VerdictSchema).pipe(Effect.orElseSucceed(() => Option.none()))
+	if (Option.isSome(verdict)) {
+		return Option.some({ blocked: Option.none<string>(), dir })
+	}
+	const blocked = yield* readJson(file, BlockedVerdict).pipe(Effect.orElseSucceed(() => Option.none()))
+	return Option.map(blocked, (b) => ({ blocked: Option.some(b.notes), dir }))
+})
+
+/** The note a report carries when the before run never reached a verdict. */
+export const beforeBlockedNote = (notes: string) =>
+	`The base commit could not be checked, so there is no before state: ${notes}`
+
+/**
+ * `witness report`: report.md in `runDir`, pairing the before run's stills, verdicts
+ * and video with this one's when the run recorded both.
+ */
+export const writeRunReport = Effect.fn("writeRunReport")(function* (runDir: string) {
+	const before = yield* beforeRun(runDir)
+	if (Option.isSome(before) && Option.isNone(before.value.blocked)) {
+		return yield* writeComparisonReport({
+			after: runDir,
+			before: before.value.dir,
+			intro: Option.none(),
+			notes: [],
+			outDir: runDir,
+			preview: Option.none(),
+		})
+	}
+	return yield* writeReport(
+		runDir,
+		Option.toArray(Option.flatMap(before, (b) => Option.map(b.blocked, beforeBlockedNote)))
+	)
 })
 
 export const criteriaTable = (v: Verdict): string =>
@@ -125,16 +168,43 @@ export const writeComparisonReport = Effect.fn("writeComparisonReport")(function
 		out.push(intro.value)
 	}
 
-	const key = (f: string) => path.basename(f).replace(/^\d+-/, "")
-	const beforeStills = new Map(
-		Option.match(b.walk, { onNone: () => [], onSome: (w) => w.stills.map((s) => [key(s.file), s] as const) })
-	)
-	for (const s of Option.match(a.walk, { onNone: () => [], onSome: (w) => w.stills })) {
-		const before = beforeStills.get(key(s.file))
+	// Stills pair by name (a walkthrough's still names, or the criterion of an agent run's screenshot).
+	const stillsOf = (r: typeof a) =>
+		Option.match(r.walk, {
+			onNone: () =>
+				Option.match(r.verdict, {
+					onNone: () => [],
+					onSome: (v) =>
+						v.criteria.flatMap((c) =>
+							Option.match(c.screenshot, {
+								onNone: () => [],
+								onSome: (shot) => [{ caption: `${c.id} ${c.status}: ${c.explanation}`, file: shot, key: c.id }],
+							})
+						),
+				}),
+			onSome: (w) =>
+				w.stills.map((s) => ({ caption: s.caption, file: s.file, key: path.basename(s.file).replace(/^\d+-/, "") })),
+		})
+	const still = Effect.fnUntraced(function* (
+		side: "Before" | "After",
+		runDir: string,
+		s: { readonly caption: string; readonly file: string }
+	) {
+		const caption = `**${side}:** ${s.caption}`
+		return `${caption}\n\n![${alt(s.caption)}](${yield* copy(runDir, s.file, side.toLowerCase())})`
+	})
+	const beforeStills = new Map(stillsOf(b).map((s) => [s.key, s] as const))
+	for (const s of stillsOf(a)) {
+		const before = beforeStills.get(s.key)
 		if (before) {
-			out.push(`${before.caption}\n\n![${alt(before.caption)}](${yield* copy(opts.before, before.file, "before")})`)
+			beforeStills.delete(s.key)
+			out.push(yield* still("Before", opts.before, before))
 		}
-		out.push(`${s.caption}\n\n![${alt(s.caption)}](${yield* copy(opts.after, s.file, "after")})`)
+		out.push(yield* still("After", opts.after, s))
+	}
+	// Before stills with no counterpart still show what the base commit did.
+	for (const s of beforeStills.values()) {
+		out.push(yield* still("Before", opts.before, s))
 	}
 
 	if (Option.isSome(a.verdict)) {

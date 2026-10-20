@@ -4,13 +4,16 @@ import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { ComputerProvider, DockerComputerProvider } from "@witness/computer"
 import { EXIT_CODES, parseWitnessConfig, RunInfo } from "@witness/domain"
 import {
+	beforeBlockedNote,
+	beforeRun,
 	Git,
 	Model,
 	runLayer,
 	type VerifyMode,
+	type VerifyOutcome,
 	verify,
 	writeComparisonReport,
-	writeReport,
+	writeRunReport,
 } from "@witness/orchestrator"
 import { type Layout, renderRun } from "@witness/renderer"
 import { Config, Console, Effect, FileSystem, Layer, Option, Path, Schema } from "effect"
@@ -60,6 +63,12 @@ const run = Command.make(
 			Flag.withDefault(true)
 		),
 		memoryGb: Flag.Int("memory-gb").pipe(Flag.withDefault(4)),
+		parallel: Flag.Boolean("parallel").pipe(
+			Flag.withDescription(
+				"Walkthrough and independent modes: verify the base commit and the change at the same time, in two computers (twice the --memory-gb and --cpus at once; the live view shows the change)"
+			),
+			Flag.withDefault(false)
+		),
 		ref: Flag.String("ref").pipe(Flag.withDescription("Commit, branch or tag to verify"), Flag.withDefault("HEAD")),
 		repo: Flag.String("repo").pipe(Flag.withDescription("App directory inside a git repo"), Flag.withDefault(".")),
 		runsDir: Flag.String("runs-dir").pipe(
@@ -84,6 +93,12 @@ const run = Command.make(
 			Flag.withDescription("Walkthrough mode: stop the spec after this many seconds"),
 			Flag.withDefault(900)
 		),
+		states: Flag.Literals("states", ["before-after", "after"]).pipe(
+			Flag.withDescription(
+				"before-after: also verify the base commit first, so the report shows the app before and after the change. after: the change only. Default: witness.yaml `states`, else before-after"
+			),
+			Flag.optional
+		),
 		task: Flag.String("task").pipe(Flag.withDescription("What the change is supposed to do"), Flag.optional),
 		taskFile: Flag.FileText("task-file").pipe(Flag.withDescription("Read the task from a file"), Flag.optional),
 		vnc: Flag.Boolean("vnc").pipe(
@@ -105,9 +120,10 @@ const run = Command.make(
 		if (Option.isNone(task) && !bootOnly) {
 			return yield* new UsageError({ message: "--task or --task-file is required (or --boot-only)" })
 		}
-		if (f.session && (bootOnly || Option.isSome(f.walkthrough) || f.keep)) {
+		if (f.session && (bootOnly || Option.isSome(f.walkthrough) || f.keep || f.parallel)) {
 			return yield* new UsageError({
-				message: "--session cannot be combined with --boot-only, --walkthrough or --keep",
+				message:
+					"--session cannot be combined with --boot-only, --walkthrough, --keep or --parallel (a session checks the base commit, then the change)",
 			})
 		}
 		const runsDir = yield* runsDirFor(f.runsDir)
@@ -157,35 +173,45 @@ const run = Command.make(
 			mode,
 			onComputer: (c: { readonly liveView: string | undefined }) =>
 				c.liveView && !f.live ? Console.log(`desktop (noVNC): ${c.liveView}`) : Effect.void,
+			parallel: f.parallel,
 			ref: f.ref,
 			repo: f.repo,
 			runsDir,
+			states: f.states,
 			task: Option.getOrElse(task, () => "noop"),
 		}
-		const outcome = yield* verify(options).pipe(
+		const outcome: VerifyOutcome = yield* verify(options).pipe(
 			Effect.provide(layers.agent.pipe(Layer.provideMerge(mode._tag === "Agent" ? Model.claude : Model.unavailable)))
 		)
 
-		if (Option.isSome(outcome.blocked)) {
-			yield* Console.log(`BLOCKED (${outcome.blocked.value.reason}): ${outcome.blocked.value.message}`)
-			if (outcome.blocked.value.logTail) {
-				yield* Console.log(`--- log tail ---\n${outcome.blocked.value.logTail}`)
+		const summarize = Effect.fnUntraced(function* (o: VerifyOutcome, heading: string) {
+			if (Option.isSome(o.blocked)) {
+				yield* Console.log(`${heading}BLOCKED (${o.blocked.value.reason}): ${o.blocked.value.message}`)
+				if (o.blocked.value.logTail) {
+					yield* Console.log(`--- log tail ---\n${o.blocked.value.logTail}`)
+				}
+			} else if (Option.isSome(o.bootMs)) {
+				yield* Console.log(`BOOTED in ${(o.bootMs.value / 1000).toFixed(1)} s (boot only, no verdict)`)
 			}
-		} else if (Option.isSome(outcome.bootMs)) {
-			yield* Console.log(`BOOTED in ${(outcome.bootMs.value / 1000).toFixed(1)} s (boot only, no verdict)`)
+			if (Option.isSome(o.verdict)) {
+				const v = o.verdict.value
+				yield* Console.log(`\n${heading}${v.overall.toUpperCase()}`)
+				for (const c of v.criteria) {
+					yield* Console.log(
+						`  ${c.id} ${c.status.padEnd(7)} ${c.description}${Option.match(c.video_ts, { onNone: () => "", onSome: ([a, b]) => `  [${a}s-${b}s]` })}`
+					)
+				}
+				if (v.usage.usd > 0) {
+					yield* Console.log(`  model spend ≈ $${v.usage.usd.toFixed(2)}`)
+				}
+			}
+		})
+		// The before run is evidence only; the exit code is the change's verdict.
+		if (outcome.before) {
+			yield* summarize(outcome.before, "before (base commit): ")
+			yield* Console.log("")
 		}
-		if (Option.isSome(outcome.verdict)) {
-			const v = outcome.verdict.value
-			yield* Console.log(`\n${v.overall.toUpperCase()}`)
-			for (const c of v.criteria) {
-				yield* Console.log(
-					`  ${c.id} ${c.status.padEnd(7)} ${c.description}${Option.match(c.video_ts, { onNone: () => "", onSome: ([a, b]) => `  [${a}s-${b}s]` })}`
-				)
-			}
-			if (v.usage.usd > 0) {
-				yield* Console.log(`  model spend ≈ $${v.usage.usd.toFixed(2)}`)
-			}
-		}
+		yield* summarize(outcome, outcome.before ? "after (the change): " : "")
 		yield* Console.log(`run dir: ${outcome.runDir}`)
 		if (yield* fs.exists(path.join(outcome.runDir, "session.json"))) {
 			yield* Console.log(`session: ${path.join(outcome.runDir, "session.json")}`)
@@ -211,7 +237,10 @@ const layoutForRun = Effect.fnUntraced(function* (runDir: string) {
 const render = Command.make(
 	"render",
 	{
-		label: Flag.String("label").pipe(Flag.withDescription('Header label, e.g. "after"'), Flag.optional),
+		label: Flag.String("label").pipe(
+			Flag.withDescription('Header label, e.g. "after" (a run with a before/ run is labelled before and after)'),
+			Flag.optional
+		),
 		layout: Flag.Literals("layout", ["pr", "hosted"]).pipe(
 			Flag.withDescription(
 				"pr: criteria rail, captions and verdict card in the video. hosted: the app fills the frame, captions go to captions.vtt. Default: witness.yaml `evidence`, else pr"
@@ -222,25 +251,47 @@ const render = Command.make(
 	},
 	Effect.fn(function* ({ runDir, label, layout }) {
 		const chosen = Option.isSome(layout) ? layout.value : yield* layoutForRun(runDir)
-		const r = yield* renderRun(runDir, {
-			layout: chosen,
-			...Option.match(label, { onNone: () => ({}), onSome: (l) => ({ label: l }) }),
-		})
-		yield* Console.log(
-			[`${r.polished} (${r.durationSec.toFixed(1)} s, ${r.layout} layout)`, r.gif, ...Option.toArray(r.captions)].join(
-				"\n"
+		const one = Effect.fnUntraced(function* (dir: string, header: Option.Option<string>) {
+			const r = yield* renderRun(dir, {
+				layout: chosen,
+				...Option.match(header, { onNone: () => ({}), onSome: (l) => ({ label: l }) }),
+			})
+			yield* Console.log(
+				[
+					`${r.polished} (${r.durationSec.toFixed(1)} s, ${r.layout} layout)`,
+					r.gif,
+					...Option.toArray(r.captions),
+				].join("\n")
 			)
-		)
+		})
+		const before = yield* beforeRun(runDir)
+		if (Option.isSome(before) && Option.isNone(before.value.blocked)) {
+			yield* one(before.value.dir, Option.some("before"))
+			yield* one(
+				runDir,
+				Option.orElse(label, () => Option.some("after"))
+			)
+		} else {
+			yield* one(runDir, label)
+		}
 	})
-).pipe(Command.withDescription("Render polished.mp4 and preview.gif from a finished run"))
+).pipe(
+	Command.withDescription(
+		"Render polished.mp4 and preview.gif from a finished run (and from its before/ run, when it recorded one)"
+	)
+)
 
 const report = Command.make(
 	"report",
 	{ runDir: Argument.String("run-dir") },
 	Effect.fn(function* ({ runDir }) {
-		yield* Console.log(yield* writeReport(runDir))
+		yield* Console.log(yield* writeRunReport(runDir))
 	})
-).pipe(Command.withDescription('Write report.md ("## Manual verification") for a finished run'))
+).pipe(
+	Command.withDescription(
+		'Write report.md ("## Manual verification") for a finished run; a run with a before/ run gets a before/after report'
+	)
+)
 
 const compare = Command.make(
 	"compare",
@@ -344,16 +395,26 @@ const uploadCmd = Command.make(
 		title: Flag.String("title").pipe(Flag.optional),
 	},
 	Effect.fn(function* (f) {
-		// One run, or two as before/after (the second counts).
+		// One run, or two as before/after (the second counts). A run that recorded its
+		// base commit (states: before-after) brings its own before.
+		const before = f.runs.length === 1 ? yield* beforeRun(f.runs[0]!) : Option.none()
+		const paired = Option.filter(before, (b) => Option.isNone(b.blocked))
 		const runs =
 			f.runs.length === 2
 				? [
 						{ dir: f.runs[0]!, label: "before" },
 						{ dir: f.runs[1]!, label: "after" },
 					]
-				: [{ dir: f.runs[0]!, label: "run" }]
+				: Option.match(paired, {
+						onNone: () => [{ dir: f.runs[0]!, label: "run" }],
+						onSome: (b) => [
+							{ dir: b.dir, label: "before" },
+							{ dir: f.runs[0]!, label: "after" },
+						],
+					})
+		const blockedNote = Option.flatMap(before, (b) => Option.map(b.blocked, beforeBlockedNote))
 		yield* upload({
-			notes: Option.toArray(f.note),
+			notes: [...Option.toArray(blockedNote), ...Option.toArray(f.note)],
 			pr: f.pr,
 			preview: f.preview,
 			repo: f.repoName,

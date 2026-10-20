@@ -114,10 +114,23 @@ export const LIVE_PAGE = `<!doctype html>
 		}
 		const d = e.data || {};
 		if (PHASES[e.event]) $("phase").textContent = PHASES[e.event] + (e.event === "boot.setup" && d.cmd ? " · " + d.cmd : "");
-		if (e.event === "run.start") { $("meta").textContent = (d.sha || "").slice(0, 7) + " · " + d.mode; runDir = d.runDir || ""; }
+		if (e.event === "run.start") { if (!runDir) { $("meta").textContent = (d.sha || "").slice(0, 7) + " · " + d.mode; mode = d.mode; runDir = d.runDir || ""; } }
+		// A before/after run checks the base commit, then the change, in two computers.
+		if (e.event === "state.start") {
+			side = d.state;
+			$("meta").textContent = (d.sha || "").slice(0, 7) + " · " + mode + " · " + (side === "before" ? "before the change" : "the change");
+			for (const c of criteria.values()) c.state = "pending";
+			renderCriteria();
+			$("overall").textContent = ""; $("overall").className = "chip";
+			const f = document.querySelector(".screen iframe");
+			if (f) f.remove();
+			$("live").style.display = "none";
+			if (!$("screen-empty")) { const empty = document.createElement("div"); empty.className = "empty"; empty.id = "screen-empty"; document.querySelector(".screen").prepend(empty); }
+			$("screen-empty").textContent = "Starting the computer…";
+		}
 		if (e.event === "computer.created") {
 			if (d.liveView) {
-				$("screen-empty").remove();
+				if ($("screen-empty")) $("screen-empty").remove();
 				const f = document.createElement("iframe");
 				f.src = d.liveView; f.title = "The computer's desktop";
 				document.querySelector(".screen").prepend(f);
@@ -126,6 +139,10 @@ export const LIVE_PAGE = `<!doctype html>
 		}
 		if (e.event === "plan.done" && Array.isArray(d.criteria)) d.criteria.forEach(declare);
 		if (e.event === "criterion.declared") declare(d);
+		if (side === "before" && (e.event === "verdict" || e.event === "run.blocked" || e.event === "boot.blocked")) {
+			$("phase").textContent = "before recorded (" + (d.overall || "blocked") + "); booting the change";
+			return;
+		}
 		if (e.event === "verdict" || e.event === "run.blocked" || e.event === "boot.blocked") {
 			const overall = d.overall || "blocked";
 			$("overall").textContent = overall; $("overall").className = "chip " + overall;
@@ -145,6 +162,8 @@ export const LIVE_PAGE = `<!doctype html>
 		empty.style.whiteSpace = "pre-line";
 	}
 	let runDir = "";
+	let mode = "";
+	let side = "";
 
 	const source = new EventSource("/events");
 	source.onmessage = (m) => onEvent(JSON.parse(m.data));

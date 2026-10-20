@@ -39,9 +39,12 @@ const program = Effect.gen(function* () {
 				keep: false,
 				memoryGb: 4,
 				mode: { _tag: "Agent" },
+				parallel: false,
 				ref: b.ref,
 				repo: fixture,
 				runsDir,
+				// Verdict checks per branch: the change only, no before run.
+				states: Option.some("after"),
 				task: TASK,
 			}).pipe(Effect.provide(runLayer(runsDir).agent.pipe(Layer.provideMerge(Model.claude))))
 			const v = Option.getOrUndefined(out.verdict)
