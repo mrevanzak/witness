@@ -1,5 +1,6 @@
 // The upload API (bearer token) for `witness upload`.
 import {
+	MANIFEST_FILE,
 	ReportApi,
 	ReportFileRejected,
 	ReportId,
@@ -32,25 +33,17 @@ export const newReportId = (): ReportId => {
 	return out.length === 22 ? Schema.decodeSync(ReportId)(out) : newReportId()
 }
 
-/** Constant-time string comparison for the upload token. */
-const sameToken = (a: string, b: string) => {
-	if (a.length !== b.length) {
-		return false
-	}
-	let diff = 0
-	for (let i = 0; i < a.length; i++) {
-		diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
-	}
-	return diff === 0
-}
+// Tokens are compared as SHA-256 digests: timingSafeEqual needs equal lengths.
+const sha256 = (s: string) => Effect.promise(() => crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)))
 
 export const UploadAuthLive = Layer.effect(
 	UploadAuth,
 	Effect.gen(function* () {
 		const { uploadToken } = yield* Bindings
+		const expected = uploadToken ? yield* sha256(uploadToken) : undefined
 		return UploadAuth.of({
 			bearer: Effect.fn(function* (httpEffect, { credential }) {
-				if (!(uploadToken && sameToken(Redacted.value(credential), uploadToken))) {
+				if (!(expected && crypto.subtle.timingSafeEqual(yield* sha256(Redacted.value(credential)), expected))) {
 					return yield* new UploadUnauthorized({ message: "missing or invalid upload token" })
 				}
 				return yield* Effect.provideService(httpEffect, Uploader, { ok: true })
@@ -59,7 +52,7 @@ export const UploadAuthLive = Layer.effect(
 	})
 )
 
-const reportUrl = (base: Option.Option<string>, id: string) =>
+const reportUrl = (base: Option.Option<string>, id: ReportId) =>
 	Effect.gen(function* () {
 		const request = yield* HttpServerRequest.HttpServerRequest
 		// originalUrl is absolute on Workers (the incoming Request's URL), so its scheme is the real one.
@@ -77,8 +70,8 @@ export const ReportsHandlers = HttpApiBuilder.group(
 		const store = yield* ReportStore
 		const repo = yield* ReportsRepo
 		const { publicUrl } = yield* Bindings
-		const exists = (id: string) =>
-			repo.get(id).pipe(
+		const exists = (id: ReportId) =>
+			repo.status(id).pipe(
 				Effect.flatMap(
 					Option.match({
 						onNone: () => Effect.fail(new ReportNotFound({ id, message: `no report ${id}` })),
@@ -99,10 +92,9 @@ export const ReportsHandlers = HttpApiBuilder.group(
 				yield* repo.setReady(params.id)
 				return { id: params.id, url: yield* reportUrl(publicUrl, params.id) }
 			}),
-			list: () => repo.list,
 			putFile: Effect.fn(function* ({ params, payload }) {
 				yield* exists(params.id)
-				if (params.name === "manifest.json") {
+				if (params.name === MANIFEST_FILE) {
 					return yield* new ReportFileRejected({ message: "reserved name", name: params.name })
 				}
 				if (payload.length > MAX_FILE_BYTES) {
@@ -112,14 +104,7 @@ export const ReportsHandlers = HttpApiBuilder.group(
 					})
 				}
 				const bytes = yield* store.putFile(params.id, params.name, payload)
-				yield* repo.addBytes(params.id, bytes)
 				return { bytes, name: params.name }
-			}),
-			remove: Effect.fn(function* ({ params }) {
-				yield* exists(params.id)
-				const deleted = yield* store.remove(params.id)
-				yield* repo.remove(params.id)
-				return { deleted, id: params.id }
 			}),
 		})
 	})

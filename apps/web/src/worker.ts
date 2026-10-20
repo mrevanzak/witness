@@ -1,8 +1,8 @@
 // Cloudflare Worker for hosted Witness reports. One Effect web handler per
 // isolate, built from the bindings on the first request.
 import { D1Client } from "@effect/sql-d1"
-import { ReportApi } from "@witness/domain"
-import { Context, Effect, Layer, Option, Stream } from "effect"
+import { MANIFEST_FILE, ReportApi, ReportFileName, ReportId, type ReportStorageError } from "@witness/domain"
+import { Context, Effect, Layer, Option, Schema, Stream } from "effect"
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { HttpApiBuilder } from "effect/http-api"
 import type { WorkerEnv } from "../alchemy.run.ts"
@@ -13,11 +13,17 @@ import { Bindings, ReportStore, ReportsRepo } from "./storage.ts"
 /** Bindings declared in alchemy.run.ts: MEDIA (R2), DB (D1), UPLOAD_TOKEN, PUBLIC_URL. */
 export type Env = WorkerEnv
 
-const ID = /^[0-9A-Za-z]{22}$/
-const FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/
+const isReportId = Schema.is(ReportId)
+const isFileName = Schema.is(ReportFileName)
 const PRIVATE = { "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow" }
 const HTML = "text/html; charset=utf-8"
 const notFound = HttpServerResponse.text(notFoundPage, { contentType: HTML, headers: PRIVATE, status: 404 })
+const storageErrorAs500 = <A, R>(page: Effect.Effect<A, ReportStorageError, R>) =>
+	page.pipe(
+		Effect.catchTag("ReportStorageError", (e) =>
+			Effect.logError(e.message).pipe(Effect.as(HttpServerResponse.text("Storage error", { status: 500 })))
+		)
+	)
 
 const PageRoutes = Layer.mergeAll(
 	HttpRouter.add(
@@ -31,11 +37,11 @@ const PageRoutes = Layer.mergeAll(
 		"/r/:id",
 		Effect.gen(function* () {
 			const { id } = yield* HttpRouter.params
-			if (!(id && ID.test(id))) {
+			if (!isReportId(id)) {
 				return notFound
 			}
-			const row = yield* ReportsRepo.use((r) => r.get(id))
-			if (Option.isNone(row) || row.value.status !== "ready") {
+			const status = yield* ReportsRepo.use((r) => r.status(id))
+			if (Option.isNone(status) || status.value !== "ready") {
 				return notFound
 			}
 			const manifest = yield* ReportStore.use((s) => s.manifest(id))
@@ -46,18 +52,14 @@ const PageRoutes = Layer.mergeAll(
 				contentType: HTML,
 				headers: { ...PRIVATE, "cache-control": "private, max-age=60" },
 			})
-		}).pipe(
-			Effect.catchTag("ReportStorageError", (e) =>
-				Effect.logError(e.message).pipe(Effect.as(HttpServerResponse.text("Storage error", { status: 500 })))
-			)
-		)
+		}).pipe(storageErrorAs500)
 	),
 	HttpRouter.add(
 		"GET",
 		"/r/:id/:file",
 		Effect.gen(function* () {
 			const { id, file } = yield* HttpRouter.params
-			if (!(id && file && ID.test(id) && FILE.test(file)) || file === "manifest.json") {
+			if (!(isReportId(id) && isFileName(file)) || file === MANIFEST_FILE) {
 				return notFound
 			}
 			const request = yield* HttpServerRequest.HttpServerRequest
@@ -90,11 +92,7 @@ const PageRoutes = Layer.mergeAll(
 						status: 206,
 					}),
 			})
-		}).pipe(
-			Effect.catchTag("ReportStorageError", (e) =>
-				Effect.logError(e.message).pipe(Effect.as(HttpServerResponse.text("Storage error", { status: 500 })))
-			)
-		)
+		}).pipe(storageErrorAs500)
 	)
 )
 

@@ -1,5 +1,5 @@
 // R2 (manifest + media) and D1 (report rows) behind Effect services.
-import { type ReportId, ReportManifest, ReportStorageError, ReportSummary } from "@witness/domain"
+import { MANIFEST_FILE, type ReportId, ReportManifest, ReportStorageError } from "@witness/domain"
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 
@@ -54,20 +54,19 @@ export class ReportStore extends Context.Service<
 	{
 		putFile: (id: ReportId, name: string, data: Uint8Array) => Effect.Effect<number, ReportStorageError>
 		putManifest: (id: ReportId, manifest: ReportManifest) => Effect.Effect<void, ReportStorageError>
-		manifest: (id: string) => Effect.Effect<Option.Option<ReportManifest>, ReportStorageError>
+		manifest: (id: ReportId) => Effect.Effect<Option.Option<ReportManifest>, ReportStorageError>
 		file: (
-			id: string,
+			id: ReportId,
 			name: string,
 			rangeHeader: string | undefined
 		) => Effect.Effect<Option.Option<StoredFile>, ReportStorageError>
-		remove: (id: ReportId) => Effect.Effect<number, ReportStorageError>
 	}
 >()("witness/web/ReportStore") {
 	static readonly layer = Layer.effect(
 		ReportStore,
 		Effect.gen(function* () {
 			const { media } = yield* Bindings
-			const key = (id: string, name: string) => `reports/${id}/${name}`
+			const key = (id: ReportId, name: string) => `reports/${id}/${name}`
 			const encodeManifest = Schema.encodeEffect(Schema.fromJsonString(ReportManifest))
 			const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(ReportManifest))
 
@@ -96,7 +95,7 @@ export class ReportStore extends Context.Service<
 						})
 					}),
 				manifest: (id) =>
-					Effect.tryPromise({ catch: fail("get manifest"), try: () => media.get(key(id, "manifest.json")) }).pipe(
+					Effect.tryPromise({ catch: fail("get manifest"), try: () => media.get(key(id, MANIFEST_FILE)) }).pipe(
 						Effect.flatMap((obj) =>
 							obj
 								? Effect.tryPromise({ catch: fail("read manifest"), try: () => obj.text() }).pipe(
@@ -124,48 +123,26 @@ export class ReportStore extends Context.Service<
 							Effect.tryPromise({
 								catch: fail("put manifest"),
 								try: () =>
-									media.put(key(id, "manifest.json"), json, { httpMetadata: { contentType: "application/json" } }),
+									media.put(key(id, MANIFEST_FILE), json, { httpMetadata: { contentType: "application/json" } }),
 							})
 						),
 						Effect.asVoid
 					),
-				remove: (id) =>
-					Effect.gen(function* () {
-						const listed = yield* Effect.tryPromise({
-							catch: fail("list"),
-							try: () => media.list({ prefix: `reports/${id}/` }),
-						})
-						const keys = listed.objects.map((o) => o.key)
-						if (keys.length) {
-							yield* Effect.tryPromise({ catch: fail("delete"), try: () => media.delete(keys) })
-						}
-						return keys.length
-					}),
 			})
 		})
 	)
 }
 
-const Row = Schema.Struct({
-	bytes: Schema.Finite,
-	created_at: Schema.String,
-	id: Schema.String,
-	overall: Schema.String,
-	pr: Schema.NullOr(Schema.String),
-	repo: Schema.NullOr(Schema.String),
-	status: Schema.Literals(["uploading", "ready"]),
-	title: Schema.String,
-})
+const ReportStatus = Schema.Literals(["uploading", "ready"])
+type ReportStatus = typeof ReportStatus.Type
 
 export class ReportsRepo extends Context.Service<
 	ReportsRepo,
 	{
 		insert: (id: ReportId, manifest: ReportManifest) => Effect.Effect<void, ReportStorageError>
-		addBytes: (id: string, bytes: number) => Effect.Effect<void, ReportStorageError>
-		setReady: (id: string) => Effect.Effect<void, ReportStorageError>
-		get: (id: string) => Effect.Effect<Option.Option<typeof Row.Type>, ReportStorageError>
-		readonly list: Effect.Effect<readonly ReportSummary[], ReportStorageError>
-		remove: (id: string) => Effect.Effect<void, ReportStorageError>
+		setReady: (id: ReportId) => Effect.Effect<void, ReportStorageError>
+		/** None when there is no such report. */
+		status: (id: ReportId) => Effect.Effect<Option.Option<ReportStatus>, ReportStorageError>
 	}
 >()("witness/web/ReportsRepo") {
 	static readonly layer = Layer.effect(
@@ -173,26 +150,18 @@ export class ReportsRepo extends Context.Service<
 		Effect.gen(function* () {
 			const sql = yield* SqlClient.SqlClient
 			const db = <A, E>(what: string, e: Effect.Effect<A, E>) => e.pipe(Effect.mapError(fail(what)))
-			const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row))
-			const decodeSummaries = Schema.decodeUnknownEffect(Schema.Array(ReportSummary))
+			const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ status: ReportStatus })))
 			return ReportsRepo.of({
-				addBytes: (id, bytes) =>
-					db("update", sql`UPDATE reports SET bytes = bytes + ${bytes} WHERE id = ${id}`).pipe(Effect.asVoid),
-				get: (id) =>
-					db("select", sql`SELECT * FROM reports WHERE id = ${id}`.pipe(Effect.flatMap(decodeRows))).pipe(
-						Effect.map((rows) => Option.fromUndefinedOr(rows[0]))
-					),
 				insert: (id, m) =>
 					db(
 						"insert",
-						sql`INSERT INTO reports (id, title, repo, pr, overall, status, bytes, created_at) VALUES (${id}, ${m.title}, ${m.repo ?? null}, ${m.pr ?? null}, ${m.overall}, 'uploading', 0, ${m.createdAt})`
+						sql`INSERT INTO reports (id, title, repo, pr, overall, status, created_at) VALUES (${id}, ${m.title}, ${m.repo ?? null}, ${m.pr ?? null}, ${m.overall}, 'uploading', ${m.createdAt})`
 					).pipe(Effect.asVoid),
-				list: db(
-					"select",
-					sql`SELECT * FROM reports ORDER BY created_at DESC LIMIT 200`.pipe(Effect.flatMap(decodeSummaries))
-				),
-				remove: (id) => db("delete", sql`DELETE FROM reports WHERE id = ${id}`).pipe(Effect.asVoid),
 				setReady: (id) => db("update", sql`UPDATE reports SET status = 'ready' WHERE id = ${id}`).pipe(Effect.asVoid),
+				status: (id) =>
+					db("select", sql`SELECT status FROM reports WHERE id = ${id}`.pipe(Effect.flatMap(decodeRows))).pipe(
+						Effect.map((rows) => Option.map(Option.fromUndefinedOr(rows[0]), (r) => r.status))
+					),
 			})
 		})
 	)

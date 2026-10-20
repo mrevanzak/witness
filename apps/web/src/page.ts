@@ -1,11 +1,17 @@
 // The hosted report page, rendered on the server from a ReportManifest.
-import type { ReportManifest, ReportSection } from "@witness/domain"
+import {
+	criterionLabel,
+	mmss,
+	PALETTE_CSS,
+	type ReportId,
+	type ReportManifest,
+	type ReportSection,
+	STATUS_WORD,
+} from "@witness/domain"
 import { Option } from "effect"
 
 const esc = (s: string) =>
 	s.replace(/[&<>"']/g, (c) => ({ "'": "&#39;", '"': "&quot;", "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!)
-const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`
-const STATUS_WORD: Record<string, string> = { blocked: "Blocked", fail: "Fail", pass: "Pass" }
 
 /** `code` spans from backticks, everything else escaped. */
 const inline = (s: string) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>")
@@ -30,7 +36,7 @@ const section = (id: string, s: ReportSection, index: number, many: boolean) => 
 				? `<button class="seek" data-video="v${index}" data-t="${seek[0]}" aria-label="Play ${esc(c.id)} at ${mmss(seek[0])}">${mmss(seek[0])}–${mmss(seek[1])}</button>`
 				: ""
 			return `<li class="crit"${span}>
-				<div class="crit-head"><span class="chip ${c.status}">${c.status}</span><span class="cid">${esc(c.id)}${c.kind === "regression" ? " · regression" : ""}</span>${time}</div>
+				<div class="crit-head"><span class="chip ${c.status}">${c.status}</span><span class="cid">${esc(criterionLabel(c, " · regression"))}</span>${time}</div>
 				<p class="cdesc">${inline(c.description)}</p>
 				<p class="cexp">${inline(c.explanation)}</p>
 			</li>`
@@ -56,7 +62,7 @@ const section = (id: string, s: ReportSection, index: number, many: boolean) => 
 				.slice(0, 50)
 				.map(
 					(e) =>
-						`<li><span class="t">${e.status ?? e.error ?? ""}</span> ${esc(e.method)} ${esc(e.url.slice(0, 200))}</li>`
+						`<li><span class="t">${esc(String(e.status ?? e.error ?? ""))}</span> ${esc(e.method)} ${esc(e.url.slice(0, 200))}</li>`
 				)
 				.join("")}</ul></details>`
 		: ""
@@ -71,7 +77,7 @@ const section = (id: string, s: ReportSection, index: number, many: boolean) => 
 	</section>`
 }
 
-export const reportPage = (id: string, m: ReportManifest): string => {
+export const reportPage = (id: ReportId, m: ReportManifest): string => {
 	const many = m.sections.length > 1
 	const meta = [m.repo, m.pr ? `PR #${m.pr}` : undefined, many ? undefined : m.sections[0]?.sha.slice(0, 7)]
 		.filter(Boolean)
@@ -93,16 +99,14 @@ export const reportPage = (id: string, m: ReportManifest): string => {
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
 	:root {
-		--bg: #0e0f10; --surface: #17181b; --hairline: #2a2c30; --text: #e7e5e0; --muted: #8b8984; --faint: #5c5e63;
-		--pass: #4cc38a; --fail: #f2555a; --blocked: #e2a336;
-		--sans: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+		${PALETTE_CSS}
 		color-scheme: dark;
 	}
 	@media (prefers-color-scheme: light) {
-		:root { --bg: #f6f5f2; --surface: #ffffff; --hairline: #dedcd6; --text: #18191b; --muted: #66645f; --faint: #9a9892; --pass: #18864f; --fail: #c8262c; --blocked: #a86b00; color-scheme: light; }
+		:root { --ink: #f6f5f2; --surface: #ffffff; --hairline: #dedcd6; --paper: #18191b; --muted: #66645f; --faint: #9a9892; --pass: #18864f; --fail: #c8262c; --blocked: #a86b00; color-scheme: light; }
 	}
 	* { box-sizing: border-box; }
-	body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 var(--sans); }
+	body { margin: 0; background: var(--ink); color: var(--paper); font: 16px/1.55 var(--sans); }
 	.wrap { max-width: 1200px; margin: 0 auto; padding: 0 24px 64px; }
 	header { display: flex; align-items: baseline; gap: 14px; padding: 18px 0; border-bottom: 1px solid var(--hairline); }
 	.brand { font: 500 15px var(--mono); }
@@ -125,14 +129,14 @@ export const reportPage = (id: string, m: ReportManifest): string => {
 	.counts { font: 13px var(--mono); color: var(--muted); margin: 0 0 6px; }
 	.criteria { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hairline); }
 	.crit { padding: 14px 0 14px 12px; margin-left: -14px; border-left: 2px solid transparent; border-bottom: 1px solid var(--hairline); transition: border-color .2s; }
-	.crit.now { border-left-color: var(--text); }
-	.crit.now .cid { color: var(--text); }
+	.crit.now { border-left-color: var(--paper); }
+	.crit.now .cid { color: var(--paper); }
 	.crit-head { display: flex; align-items: center; gap: 10px; }
 	.cid { font: 13px var(--mono); color: var(--muted); }
 	.chip { font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; border: 1px solid currentColor; }
-	.seek { margin-left: auto; font: 13px var(--mono); color: var(--text); background: none; border: 1px solid var(--hairline); border-radius: 4px; padding: 2px 8px; cursor: pointer; }
+	.seek { margin-left: auto; font: 13px var(--mono); color: var(--paper); background: none; border: 1px solid var(--hairline); border-radius: 4px; padding: 2px 8px; cursor: pointer; }
 	.seek:hover { border-color: var(--muted); }
-	.seek:focus-visible, a:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+	.seek:focus-visible, a:focus-visible { outline: 2px solid var(--paper); outline-offset: 2px; }
 	.cdesc { margin: 6px 0 4px; font-weight: 500; }
 	.cexp { margin: 0; color: var(--muted); font-size: 15px; }
 	.stills { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 28px; }
@@ -157,7 +161,7 @@ export const reportPage = (id: string, m: ReportManifest): string => {
 <div class="wrap">
 	<header><span class="brand">witness</span><span class="meta">${meta}</span><span class="unlisted">unlisted report</span></header>
 	<h1>${inline(m.title)}</h1>
-	<div class="verdict"><span class="word ${m.overall}">${STATUS_WORD[m.overall] ?? m.overall}</span><span class="when">${esc(created)}</span></div>
+	<div class="verdict"><span class="word ${m.overall}">${STATUS_WORD[m.overall]}</span><span class="when">${esc(created)}</span></div>
 	${m.preview ? `<p class="preview">${inline(m.preview)}</p>` : ""}
 	${m.intro ? `<p class="intro">${inline(m.intro)}</p>` : ""}
 	${m.sections.map((s, i) => section(id, s, i, many)).join("")}
