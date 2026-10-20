@@ -1,26 +1,17 @@
 // Pure timeline math for the polished video: speed ramps, zoom keyframes, cursor
-// path, captions, title cards and verdict moments. Source times are seconds into
-// raw.mp4; output times are seconds into polished.mp4.
+// path, captions, freezes on failing checks and each criterion's check window,
+// plus the layouts the driver (render.ts) and the composition (polished.tsx) share.
+// Source times are seconds into raw.mp4; output times are seconds into polished.mp4.
+// Type-only imports: this file is bundled into the Remotion composition.
+import type { CriterionStatus, EvidenceDestination, Step, StepTool, VerdictCriterion } from "@witness/domain"
 
-export type StepIn = {
-	criterion?: string
-	label?: string
-	status?: string
-	t: number
-	to_x?: number
-	to_y?: number
-	tool: string
-	x?: number
-	y?: number
+/** A recorded step that has a video time. */
+export type StepIn = Pick<Step, "criterion" | "label" | "status" | "to_x" | "to_y" | "tool" | "x" | "y"> & {
+	readonly t: number
 }
 
-export type CriterionIn = {
-	description: string
-	explanation: string
-	id: string
-	kind: "feature" | "regression"
-	screenshot: string | null
-	status: "pass" | "fail" | "blocked"
+export type CriterionIn = Pick<VerdictCriterion, "description" | "explanation" | "id" | "status"> & {
+	readonly screenshot: string | null
 }
 
 export type TimelineOptions = {
@@ -45,6 +36,98 @@ export const DEFAULTS: TimelineOptions = {
 	screen: { h: 1080, w: 1920 },
 	targetSec: 55,
 	zoom: 1.8,
+}
+
+/** The timings the pacing is built from, in seconds (`near` is screen px). */
+export const PACING = {
+	/** Real-time (1x) windows, [before, after] a step. */
+	active: {
+		action: [0.8, 1.6],
+		begin: [0.2, 1.6],
+		end: [0.4, 1.2],
+		/** The opening stretch, from 0. */
+		opening: 1.2,
+	},
+	/** A label is captioned from `lead` before its step for up to `hold`, until the next caption starts. */
+	caption: { hold: 2.6, lead: 0.3 },
+	cursor: {
+		/** A drag's end point follows its start. */
+		dragEnd: 0.3,
+		/** Eased glide into each point; a click's ripple expands over the same time. */
+		glide: 0.45,
+		/** Shown from [0] before an action until [1] after it. */
+		show: [0.8, 2.0],
+	},
+	idle: {
+		/** Floor on a capped idle stretch's output length. */
+		minCap: 0.3,
+		/** Idle gaps shorter than this play at 1x. */
+		minGap: 2,
+	},
+	zoom: {
+		/** Arrive on an action this long before it. */
+		arrive: 0.05,
+		/** Actions closer than this share one zoom-in; the camera pans between them. */
+		groupGap: 2.6,
+		/** Hold after a group's last action, then zoom out over `out`. */
+		hold: 1.4,
+		/** Zoom in over this lead before a group's first action. */
+		lead: 0.6,
+		/** Actions within this many px of each other also share a zoom when less than `panGap` apart. */
+		near: 600,
+		out: 0.6,
+		/** Pan to each next action over this lead. */
+		pan: 0.5,
+		panGap: 10,
+	},
+} as const
+
+/**
+ * How the video is framed for where it is published. `pr`: the app beside the
+ * criteria rail, with captions, tape and a verdict card burned in (it plays
+ * alone in the PR). `hosted`: the app fills the frame; the report page shows the
+ * criteria and verdict, and captions ship as captions.vtt.
+ */
+export type Layout = EvidenceDestination
+
+export type LayoutSpec = {
+	/** Burned into the frame, or written to captions.vtt for the page to toggle. */
+	readonly captions: "burned" | "vtt"
+	/** Header, criteria rail, timecode and evidence tape around the app. */
+	readonly chrome: boolean
+	/** Verdict card at the end (0: none, the page shows the verdict). */
+	readonly endCardSec: number
+	/** Where the app sits in the 1920x1080 composition. */
+	readonly frame: {
+		readonly x: number
+		readonly y: number
+		readonly w: number
+		readonly h: number
+		readonly radius: number
+	}
+	/** `outer`: a hairline frame that turns red on a freeze. `inner`: no frame; a red border drawn inside on a freeze. */
+	readonly freezeBorder: "outer" | "inner"
+	/** In-frame labels (speed badge, freeze note); the hosted video plays small on the page. */
+	readonly labelScale: number
+}
+
+export const LAYOUTS: Record<Layout, LayoutSpec> = {
+	hosted: {
+		captions: "vtt",
+		chrome: false,
+		endCardSec: 0,
+		frame: { h: 1080, radius: 0, w: 1920, x: 0, y: 0 },
+		freezeBorder: "inner",
+		labelScale: 1.5,
+	},
+	pr: {
+		captions: "burned",
+		chrome: true,
+		endCardSec: DEFAULTS.endCardSec,
+		frame: { h: Math.round((1432 * 9) / 16), radius: 8, w: 1432, x: 440, y: 76 },
+		freezeBorder: "outer",
+		labelScale: 1,
+	},
 }
 
 export type Segment =
@@ -73,29 +156,59 @@ export type CursorKey = {
 	y: number
 }
 
+/** A criterion and the source times of its first begin_criterion / end_criterion steps (null without one). */
+export type TimelineCriterion = {
+	begin: number | null
+	description: string
+	end: number | null
+	id: string
+	status: CriterionStatus
+}
+
 export type Timeline = {
 	captions: Array<{ start: number; end: number; text: string }>
-	cards: Array<{ start: number; end: number; id: string; kind: string; title: string }>
+	criteria: TimelineCriterion[]
 	/** Source times of clicks (ripple). */
 	clicks: Array<{ t: number; x: number; y: number }>
 	cursor: CursorKey[]
 	/** Source-time windows when the cursor is shown. */
 	cursorVisible: [number, number][]
 	durationInFrames: number
-	end: { overall: string; title: string; criteria: Array<{ id: string; status: string; description: string }> }
 	fps: number
-	marks: Array<{ start: number; end: number; id: string; status: string }>
 	/** Short SHA and an optional label ("before"/"after") for the header. */
 	meta: { sha: string; label?: string }
+	overall: CriterionStatus
 	screen: { w: number; h: number }
 	segments: Segment[]
 	sourceDuration: number
 	zoom: ZoomKey[]
 }
 
-const POINTER = new Set(["click", "double_click", "right_click", "click_element", "drag", "scroll"])
-const FOCUS = new Set(["type", "type_secret", "key"])
-const CLICK = new Set(["click", "double_click", "right_click", "click_element"])
+/** Input props of the Remotion composition (render/props.json). */
+export type PolishedProps = {
+	layout: Layout
+	timeline: Timeline
+	title: string
+	/** raw.mp4, relative to the public dir (the run dir). */
+	video: string
+}
+
+const POINTER: ReadonlySet<StepTool> = new Set([
+	"click",
+	"double_click",
+	"right_click",
+	"click_element",
+	"drag",
+	"scroll",
+])
+const FOCUS: ReadonlySet<StepTool> = new Set(["type", "type_secret", "key"])
+const CLICK: ReadonlySet<StepTool> = new Set(["click", "double_click", "right_click", "click_element"])
+
+/** A step the viewer sees happen: pointer actions, typing and navigation. */
+export const isVisualStep = (tool: StepTool) => POINTER.has(tool) || FOCUS.has(tool) || tool === "navigate"
+
+/** A click of any kind (it gets a ripple). */
+export const isClick = (tool: StepTool) => CLICK.has(tool)
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
@@ -127,7 +240,7 @@ export function focusPoints(
 			pts.push({ t: s.t, ...last, tool: s.tool })
 			if (s.tool === "drag" && s.to_x != null && s.to_y != null) {
 				last = { x: s.to_x, y: s.to_y }
-				pts.push({ t: s.t + 0.3, ...last, tool: "drag_end" })
+				pts.push({ t: s.t + PACING.cursor.dragEnd, ...last, tool: "drag_end" })
 			}
 		} else if (FOCUS.has(s.tool) && last) {
 			pts.push({ t: s.t, ...last, tool: s.tool })
@@ -149,53 +262,45 @@ export function clampCenter(
 }
 
 /**
- * Zoom keyframes. Actions closer than `groupGap` seconds (or near each other on
- * screen within `panGap`) share one zoom-in and pan between points; the camera
- * zooms back out ~1.5 s after the last action of a group.
+ * Zoom keyframes. Nearby actions (PACING.zoom) share one zoom-in and pan between
+ * points; the camera zooms back out after the last action of a group. Each key
+ * is nudged at least 0.01 s past the previous so times never go backwards.
  */
 export function zoomKeys(
 	points: Array<{ t: number; x: number; y: number }>,
-	o: Pick<TimelineOptions, "zoom" | "screen"> = DEFAULTS,
-	groupGap = 2.6,
-	panGap = 10,
-	near = 600
+	o: Pick<TimelineOptions, "zoom" | "screen"> = DEFAULTS
 ): ZoomKey[] {
+	const P = PACING.zoom
 	const center = { cx: o.screen.w / 2, cy: o.screen.h / 2 }
 	const keys: ZoomKey[] = [{ scale: 1, t: 0, ...center }]
+	const at = (p: { x: number; y: number }) => clampCenter(p.x, p.y, o.zoom, o.screen)
 	let i = 0
 	while (i < points.length) {
 		let j = i
-		while (j + 1 < points.length) {
-			const a = points[j]!
-			const b = points[j + 1]!
+		for (let a = points[j], b = points[j + 1]; a && b; a = b, b = points[j + 1]) {
 			const gap = b.t - a.t
-			const dist = Math.hypot(b.x - a.x, b.y - a.y)
-			if (gap < groupGap || (gap < panGap && dist < near)) {
-				j += 1
-			} else {
+			if (!(gap < P.groupGap || (gap < P.panGap && Math.hypot(b.x - a.x, b.y - a.y) < P.near))) {
 				break
 			}
+			j += 1
 		}
-		const group = points.slice(i, j + 1)
-		const first = group[0]!
-		const lastKey = keys.at(-1)!
-		const zIn = Math.max(first.t - 0.6, lastKey.t + 0.01)
+		const [first, ...rest] = points.slice(i, j + 1)
+		if (!first) {
+			break
+		}
+		const zIn = Math.max(first.t - P.lead, (keys.at(-1)?.t ?? 0) + 0.01)
 		keys.push({ scale: 1, t: zIn, ...center })
-		keys.push({
-			scale: o.zoom,
-			t: Math.max(first.t - 0.05, zIn + 0.01),
-			...clampCenter(first.x, first.y, o.zoom, o.screen),
-		})
-		for (const p of group.slice(1)) {
-			const prev = keys.at(-1)!
-			const panStart = Math.max(p.t - 0.5, prev.t + 0.01)
-			keys.push({ ...prev, t: panStart })
-			keys.push({ scale: o.zoom, t: Math.max(p.t - 0.05, panStart + 0.01), ...clampCenter(p.x, p.y, o.zoom, o.screen) })
+		let last: ZoomKey = { scale: o.zoom, t: Math.max(first.t - P.arrive, zIn + 0.01), ...at(first) }
+		keys.push(last)
+		for (const p of rest) {
+			const panStart = Math.max(p.t - P.pan, last.t + 0.01)
+			keys.push({ ...last, t: panStart })
+			last = { scale: o.zoom, t: Math.max(p.t - P.arrive, panStart + 0.01), ...at(p) }
+			keys.push(last)
 		}
-		const last = keys.at(-1)!
-		const holdEnd = group.at(-1)!.t + 1.4
+		const holdEnd = (rest.at(-1) ?? first).t + P.hold
 		keys.push({ ...last, t: Math.max(holdEnd, last.t + 0.01) })
-		keys.push({ scale: 1, t: Math.max(holdEnd + 0.6, last.t + 0.02), ...center })
+		keys.push({ scale: 1, t: Math.max(holdEnd + P.out, last.t + 0.02), ...center })
 		i = j + 1
 	}
 	return keys
@@ -203,47 +308,55 @@ export function zoomKeys(
 
 const easeInOutCubic = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2)
 
-/** Interpolated zoom at source time t (eased between keyframes). */
-export function zoomAt(keys: ZoomKey[], t: number): ZoomKey {
-	if (keys.length === 0) {
-		return { cx: DEFAULTS.screen.w / 2, cy: DEFAULTS.screen.h / 2, scale: 1, t }
-	}
-	if (t <= keys[0]!.t) {
-		return { ...keys[0]!, t }
-	}
-	for (let k = 0; k < keys.length - 1; k++) {
-		const a = keys[k]!
-		const b = keys[k + 1]!
-		if (t >= a.t && t <= b.t) {
-			const u = b.t === a.t ? 1 : easeInOutCubic((t - a.t) / (b.t - a.t))
-			return { cx: a.cx + (b.cx - a.cx) * u, cy: a.cy + (b.cy - a.cy) * u, scale: a.scale + (b.scale - a.scale) * u, t }
-		}
-	}
-	return { ...keys.at(-1)!, t }
-}
-
-/** Cursor position at source t: eased glide into each point over the 0.45 s before it. */
-export function cursorAt(keys: CursorKey[], t: number): { x: number; y: number } | null {
-	if (keys.length === 0) {
+/** The keyframes either side of t, or the edge key when t is outside them. */
+const around = <K extends { t: number }>(keys: K[], t: number): { a: K; b: K } | { edge: K } | null => {
+	const [head] = keys
+	if (!head) {
 		return null
 	}
-	if (t <= keys[0]!.t) {
-		return { x: keys[0]!.x, y: keys[0]!.y }
+	if (t <= head.t) {
+		return { edge: head }
 	}
 	for (let k = 0; k < keys.length - 1; k++) {
-		const a = keys[k]!
-		const b = keys[k + 1]!
-		if (t >= a.t && t <= b.t) {
-			const start = Math.max(a.t, b.t - 0.45)
-			if (t <= start) {
-				return { x: a.x, y: a.y }
-			}
-			const u = easeInOutCubic((t - start) / (b.t - start))
-			return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u }
+		const a = keys[k]
+		const b = keys[k + 1]
+		if (a && b && t >= a.t && t <= b.t) {
+			return { a, b }
 		}
 	}
-	const last = keys.at(-1)!
-	return { x: last.x, y: last.y }
+	return { edge: keys.at(-1) ?? head }
+}
+
+/** Interpolated zoom at source time t (eased between keyframes). */
+export function zoomAt(keys: ZoomKey[], t: number): ZoomKey {
+	const span = around(keys, t)
+	if (!span) {
+		return { cx: DEFAULTS.screen.w / 2, cy: DEFAULTS.screen.h / 2, scale: 1, t }
+	}
+	if ("edge" in span) {
+		return { ...span.edge, t }
+	}
+	const { a, b } = span
+	const u = b.t === a.t ? 1 : easeInOutCubic((t - a.t) / (b.t - a.t))
+	return { cx: a.cx + (b.cx - a.cx) * u, cy: a.cy + (b.cy - a.cy) * u, scale: a.scale + (b.scale - a.scale) * u, t }
+}
+
+/** Cursor position at source t: an eased glide into each point over the PACING.cursor.glide before it. */
+export function cursorAt(keys: CursorKey[], t: number): { x: number; y: number } | null {
+	const span = around(keys, t)
+	if (!span) {
+		return null
+	}
+	if ("edge" in span) {
+		return { x: span.edge.x, y: span.edge.y }
+	}
+	const { a, b } = span
+	const start = Math.max(a.t, b.t - PACING.cursor.glide)
+	if (t <= start) {
+		return { x: a.x, y: a.y }
+	}
+	const u = easeInOutCubic((t - start) / (b.t - start))
+	return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u }
 }
 
 /**
@@ -275,7 +388,7 @@ export function pace(
 
 	// Short idle gaps are not worth a speed change.
 	for (const p of parts) {
-		if (p.fast && p.srcEnd - p.srcStart < 2) {
+		if (p.fast && p.srcEnd - p.srcStart < PACING.idle.minGap) {
 			p.fast = false
 		}
 	}
@@ -287,7 +400,7 @@ export function pace(
 	const speed = idleLen > 0 ? clamp(idleLen / Math.max(budget, 0.001), o.idleSpeed.min, o.idleSpeed.max) : 1
 	let cap = Number.POSITIVE_INFINITY
 	if (idleLen / speed > budget && idle.length > 0) {
-		cap = Math.max(0.3, budget / idle.length)
+		cap = Math.max(PACING.idle.minCap, budget / idle.length)
 	}
 	return parts.map((p) => {
 		if (!p.fast) {
@@ -299,11 +412,21 @@ export function pace(
 	})
 }
 
+/** Real-time window [before, after] around a step, if it gets one. */
+const activeWindow = (tool: StepTool): readonly [number, number] | null => {
+	if (isVisualStep(tool)) {
+		return PACING.active.action
+	}
+	if (tool === "begin_criterion") {
+		return PACING.active.begin
+	}
+	return tool === "end_criterion" ? PACING.active.end : null
+}
+
 export function buildTimeline(input: {
 	steps: StepIn[]
 	criteria: CriterionIn[]
-	overall: string
-	title: string
+	overall: CriterionStatus
 	sourceDuration: number
 	meta?: { sha: string; label?: string }
 	options?: Partial<TimelineOptions>
@@ -316,26 +439,26 @@ export function buildTimeline(input: {
 	const byId = new Map(input.criteria.map((c) => [c.id, c]))
 
 	// Active (real-time) windows: around every action, criterion boundary, and the opening second.
-	const active: [number, number][] = [[0, 1.2]]
+	const active: [number, number][] = [[0, PACING.active.opening]]
 	for (const s of steps) {
-		if (POINTER.has(s.tool) || FOCUS.has(s.tool) || s.tool === "navigate") {
-			active.push([s.t - 0.8, s.t + 1.6])
-		} else if (s.tool === "begin_criterion") {
-			active.push([s.t - 0.2, s.t + 1.6])
-		} else if (s.tool === "end_criterion") {
-			active.push([s.t - 0.4, s.t + 1.2])
+		const w = activeWindow(s.tool)
+		if (w) {
+			active.push([s.t - w[0], s.t + w[1]])
 		}
 	}
 	// Keep zoom transitions at 1x so they never jump.
-	for (let k = 1; k < zoom.length; k++) {
-		if (zoom[k]!.scale !== zoom[k - 1]!.scale) {
-			active.push([zoom[k - 1]!.t, zoom[k]!.t])
+	zoom.forEach((b, k) => {
+		const a = zoom[k - 1]
+		if (a && b.scale !== a.scale) {
+			active.push([a.t, b.t])
 		}
-	}
+	})
 
-	const fails = steps.filter(
-		(s) => s.tool === "end_criterion" && s.status === "fail" && byId.get(s.criterion ?? "")?.status === "fail"
-	)
+	// A failing check freezes on its criterion's screenshot right after its end_criterion.
+	const fails = steps.flatMap((s) => {
+		const c = s.tool === "end_criterion" && s.status === "fail" ? byId.get(s.criterion ?? "") : undefined
+		return c?.status === "fail" ? [{ c, t: s.t }] : []
+	})
 	const extra = fails.length * o.freezeSec + o.endCardSec
 	const paced = pace(dur, active, extra, o)
 
@@ -343,7 +466,6 @@ export function buildTimeline(input: {
 	const segments: Segment[] = []
 	let frame = 0
 	const f = (sec: number) => Math.max(1, Math.round(sec * o.fps))
-	const pendingFreezes = [...fails]
 	const pushVideo = (srcStart: number, srcEnd: number, rate: number, fast: boolean) => {
 		if (srcEnd - srcStart <= 1e-6) {
 			return
@@ -352,29 +474,7 @@ export function buildTimeline(input: {
 		segments.push({ fast, frames, from: frame, kind: "video", rate, srcEnd, srcStart })
 		frame += frames
 	}
-	for (const p of paced) {
-		let start = p.srcStart
-		while (pendingFreezes.length && pendingFreezes[0]!.t >= start && pendingFreezes[0]!.t < p.srcEnd) {
-			const fz = pendingFreezes.shift()!
-			pushVideo(start, fz.t, p.rate, p.fast)
-			const c = byId.get(fz.criterion!)!
-			const frames = f(o.freezeSec)
-			segments.push({
-				criterion: c.id,
-				explanation: c.explanation,
-				frames,
-				from: frame,
-				image: c.screenshot,
-				kind: "freeze",
-				srcAt: fz.t,
-			})
-			frame += frames
-			start = fz.t
-		}
-		pushVideo(start, p.srcEnd, p.rate, p.fast)
-	}
-	for (const fz of pendingFreezes) {
-		const c = byId.get(fz.criterion!)!
+	const pushFreeze = (c: CriterionIn, srcAt: number) => {
 		const frames = f(o.freezeSec)
 		segments.push({
 			criterion: c.id,
@@ -383,9 +483,27 @@ export function buildTimeline(input: {
 			from: frame,
 			image: c.screenshot,
 			kind: "freeze",
-			srcAt: Math.min(fz.t, dur),
+			srcAt,
 		})
 		frame += frames
+	}
+	const pending = [...fails]
+	/** The next failure, if it falls in [from, to). */
+	const takeFail = (from: number, to: number) => {
+		const [next] = pending
+		return next && next.t >= from && next.t < to ? pending.shift() : undefined
+	}
+	for (const p of paced) {
+		let start = p.srcStart
+		for (let fz = takeFail(start, p.srcEnd); fz; fz = takeFail(start, p.srcEnd)) {
+			pushVideo(start, fz.t, p.rate, p.fast)
+			pushFreeze(fz.c, fz.t)
+			start = fz.t
+		}
+		pushVideo(start, p.srcEnd, p.rate, p.fast)
+	}
+	for (const fz of pending) {
+		pushFreeze(fz.c, Math.min(fz.t, dur))
 	}
 	if (o.endCardSec > 0) {
 		const endFrames = f(o.endCardSec)
@@ -393,48 +511,42 @@ export function buildTimeline(input: {
 		frame += endFrames
 	}
 
-	// Cursor: glides between focus points; visible from 0.8 s before an action until 2 s after.
+	// Cursor: glides between focus points; visible around each action.
+	const { show } = PACING.cursor
 	const cursor: CursorKey[] = pts.map((p) => ({ t: p.t, x: p.x, y: p.y }))
-	const cursorVisible = mergeWindows(pts.map((p) => [p.t - 0.8, p.t + 2.0] as [number, number]))
-	const clicks = steps
-		.filter((s) => o.animate && CLICK.has(s.tool) && s.x != null && s.y != null)
-		.map((s) => ({ t: s.t, x: s.x!, y: s.y! }))
+	const cursorVisible = mergeWindows(pts.map((p) => [p.t - show[0], p.t + show[1]] as [number, number]))
+	const clicks = o.animate
+		? steps.flatMap((s) => (isClick(s.tool) && s.x != null && s.y != null ? [{ t: s.t, x: s.x, y: s.y }] : []))
+		: []
 
-	const labelled = steps.filter(
-		(s) =>
-			s.label &&
-			(POINTER.has(s.tool) || FOCUS.has(s.tool) || s.tool === "navigate" || s.tool === "wait" || s.tool === "step")
+	const labelled = steps.flatMap((s) =>
+		s.label && (isVisualStep(s.tool) || s.tool === "wait" || s.tool === "step") ? [{ t: s.t, text: s.label }] : []
 	)
+	const { hold, lead } = PACING.caption
 	const captions = labelled.map((s, k) => {
 		const next = labelled[k + 1]?.t ?? Number.POSITIVE_INFINITY
-		return { end: Math.min(next - 0.3, s.t + 2.6), start: Math.max(0, s.t - 0.3), text: s.label! }
+		return { end: Math.min(next - lead, s.t + hold), start: Math.max(0, s.t - lead), text: s.text }
 	})
 
-	const cards = steps
-		.filter((s) => s.tool === "begin_criterion" && s.criterion && byId.has(s.criterion))
-		.map((s) => {
-			const c = byId.get(s.criterion!)!
-			return { end: s.t + 1.5, id: c.id, kind: c.kind, start: s.t, title: c.description }
-		})
-	const marks = steps
-		.filter((s) => s.tool === "end_criterion" && s.criterion && byId.has(s.criterion))
-		.map((s) => ({ end: s.t + 1.2, id: s.criterion!, start: s.t, status: byId.get(s.criterion!)!.status }))
+	const firstT = (tool: string, id: string) => steps.find((s) => s.tool === tool && s.criterion === id)?.t ?? null
+	const criteria = input.criteria.map((c) => ({
+		begin: firstT("begin_criterion", c.id),
+		description: c.description,
+		end: firstT("end_criterion", c.id),
+		id: c.id,
+		status: c.status,
+	}))
 
 	return {
 		captions,
-		cards,
 		clicks,
+		criteria,
 		cursor,
 		cursorVisible,
 		durationInFrames: frame,
-		end: {
-			criteria: input.criteria.map((c) => ({ description: c.description, id: c.id, status: c.status })),
-			overall: input.overall,
-			title: input.title,
-		},
 		fps: o.fps,
-		marks,
 		meta: input.meta ?? { sha: "" },
+		overall: input.overall,
 		screen: o.screen,
 		segments,
 		sourceDuration: dur,
@@ -442,9 +554,25 @@ export function buildTimeline(input: {
 	}
 }
 
+export type CriterionState = TimelineCriterion &
+	({ judged: false; state: "pending" | "running" } | { judged: true; state: CriterionStatus })
+
+/** Each criterion at source time t: pending, running from its begin step, then judged (its status) from its end step. */
+export function criterionStatesAt(tl: Timeline, t: number): CriterionState[] {
+	return tl.criteria.map((c): CriterionState => {
+		if (c.end !== null && t >= c.end) {
+			return { ...c, judged: true, state: c.status }
+		}
+		return { ...c, judged: false, state: c.begin !== null && t >= c.begin ? "running" : "pending" }
+	})
+}
+
 /** Source time shown at an output frame (null on freeze/end frames). */
 export function sourceTimeAt(tl: Timeline, frame: number): { t: number | null; segment: Segment } {
-	const seg = tl.segments.find((s) => frame >= s.from && frame < s.from + s.frames) ?? tl.segments.at(-1)!
+	const seg = tl.segments.find((s) => frame >= s.from && frame < s.from + s.frames) ?? tl.segments.at(-1)
+	if (!seg) {
+		throw new Error("timeline has no segments")
+	}
 	if (seg.kind === "video") {
 		return { segment: seg, t: seg.srcStart + ((frame - seg.from) / tl.fps) * seg.rate }
 	}
@@ -462,6 +590,27 @@ export function outputTimeOf(tl: Timeline, srcT: number): number | null {
 		}
 	}
 	return null
+}
+
+const round1 = (s: number) => Math.round(s * 10) / 10
+
+/**
+ * Where each criterion's check is shown in polished.mp4: its [start, end] in raw.mp4
+ * as output seconds (0.1 s). Skips criteria without a video range or whose start is
+ * cut; an end that is cut collapses onto the start.
+ */
+export function seekOf(
+	tl: Timeline,
+	criteria: ReadonlyArray<{ readonly id: string; readonly video_ts: readonly [number, number] | null }>
+): Record<string, [number, number]> {
+	const seek: Record<string, [number, number]> = {}
+	for (const c of criteria) {
+		const start = c.video_ts && outputTimeOf(tl, c.video_ts[0])
+		if (c.video_ts && start != null) {
+			seek[c.id] = [round1(start), round1(outputTimeOf(tl, c.video_ts[1]) ?? start)]
+		}
+	}
+	return seek
 }
 
 /** Captions in output seconds, each cut off where its video stretch ends (a freeze or the end card). */

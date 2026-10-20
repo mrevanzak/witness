@@ -1,63 +1,85 @@
 // Renders <run>/polished.mp4 (Remotion) and preview.gif (ffmpeg) from a finished
-// run: computer/raw.mp4, steps.jsonl, verdict.json, run.json.
+// run: computer/raw.mp4, steps.jsonl, verdict.json, run.json. What was rendered
+// (layout, and where each criterion's check lands in the video) goes to
+// render/rendered.json for `witness upload`.
 
-import { createRequire } from "node:module"
-import { EvidenceDestination, RunInfo, Step, Verdict } from "@witness/domain"
-import { Effect, FileSystem, Option, Path, Schema, Stream } from "effect"
+import { fileURLToPath } from "node:url"
+import { bundle } from "@remotion/bundler"
+import { renderMedia, selectComposition } from "@remotion/renderer"
+import {
+	EvidenceDestination,
+	messageOf,
+	RUN_FILES,
+	RunInfo,
+	readRunFile,
+	readSteps,
+	reportTitle,
+	requireRunFile,
+	Verdict,
+} from "@witness/domain"
+import { Effect, FileSystem, Option, Path, Schema } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
-import { buildTimeline, captionCues, type Timeline, type TimelineOptions, webVtt } from "./timeline.ts"
+import {
+	buildTimeline,
+	captionCues,
+	LAYOUTS,
+	type Layout,
+	type PolishedProps,
+	seekOf,
+	type Timeline,
+	webVtt,
+} from "./timeline.ts"
+
+export type { Layout } from "./timeline.ts"
 
 /** A render step (Remotion, ffmpeg, ffprobe) failed or the run is incomplete. */
 export class RenderError extends Schema.TaggedError<RenderError>()("RenderError", {
 	message: Schema.String,
 }) {}
 
-/**
- * How the video is framed for where it is published. `pr`: the app beside the
- * criteria rail, with captions, tape and a verdict card burned in (it plays
- * alone in the PR). `hosted`: the app fills the frame; the report page shows the
- * criteria and verdict, and captions ship as captions.vtt.
- */
-export type Layout = EvidenceDestination
+/** What polished.mp4 is rendered with: its layout, and whether the camera and cursor move. */
+export type RenderSettings = { readonly animate: boolean; readonly layout: Layout }
 
-export type RenderResult = {
-	readonly animate: boolean
+/** What polished.mp4 was rendered as (render/rendered.json). */
+export const RenderedCut = Schema.Struct({
+	animate: Schema.Boolean,
+	durationSec: Schema.Finite,
+	layout: EvidenceDestination,
+	/** Per criterion: [start, end] seconds in polished.mp4 where its check is shown. */
+	seek: Schema.Record(Schema.String, Schema.Tuple([Schema.Finite, Schema.Finite])),
+})
+export type RenderedCut = typeof RenderedCut.Type
+const RenderedCutJson = Schema.fromJsonString(RenderedCut)
+
+export type RenderResult = RenderedCut & {
 	readonly captions: Option.Option<string>
-	readonly durationSec: number
 	readonly gif: string
-	readonly layout: Layout
 	readonly polished: string
 	readonly timeline: Timeline
 }
 
-/** What polished.mp4 is rendered with: its layout, and whether the camera and cursor move. */
-export type RenderSettings = { readonly animate: boolean; readonly layout: Layout }
-
-/** Timeline options the settings imply (the hosted cut has no verdict card). */
-export const renderOptions = ({ animate, layout }: RenderSettings): Partial<TimelineOptions> => ({
-	animate,
-	...(layout === "hosted" ? { endCardSec: 0 } : {}),
-})
-
-const RenderedProps = Schema.Struct({
-	animate: Schema.optionalKey(Schema.Boolean),
-	layout: Schema.optionalKey(EvidenceDestination),
-})
-
-/** The settings polished.mp4 was last rendered with, if it was rendered. */
-export const renderedSettings = Effect.fn("renderedSettings")(function* (runDir: string) {
-	const fs = yield* FileSystem.FileSystem
-	const path = yield* Path.Path
-	return yield* fs.readFileString(path.join(runDir, "render", "props.json")).pipe(
-		Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(RenderedProps))),
-		Effect.map((p): RenderSettings => ({ animate: p.animate ?? true, layout: p.layout ?? "pr" })),
-		Effect.option
-	)
-})
-
-const HERE = new URL(".", import.meta.url).pathname
 const failed = (what: string) => (e: { readonly message: string }) =>
 	new RenderError({ message: `${what}: ${e.message}` })
+
+/** What polished.mp4 was last rendered as; none if it was never rendered (or by a witness that did not record it). */
+export const readRenderedCut = Effect.fn("readRenderedCut")(function* (runDir: string) {
+	const fs = yield* FileSystem.FileSystem
+	const path = yield* Path.Path
+	const file = path.join(runDir, "render", "rendered.json")
+	if (!(yield* fs.exists(file).pipe(Effect.mapError(failed("render/rendered.json"))))) {
+		return Option.none<RenderedCut>()
+	}
+	return yield* fs
+		.readFileString(file)
+		.pipe(
+			Effect.flatMap(Schema.decodeUnknownEffect(RenderedCutJson)),
+			Effect.map(Option.some),
+			Effect.mapError(failed("render/rendered.json"))
+		)
+})
+
+// src/ here, dist/bin in the bundled CLI: ../remotion sits next to either (apps/cli/scripts/build.ts).
+const ENTRY = fileURLToPath(new URL("../remotion/index.ts", import.meta.url))
 
 const probeDuration = Effect.fnUntraced(function* (file: string) {
 	const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
@@ -67,63 +89,68 @@ const probeDuration = Effect.fnUntraced(function* (file: string) {
 	return Number.parseFloat(out.trim())
 })
 
-/** The timeline for a finished run (pure math over its decoded artifacts). */
-export const timelineForRun = Effect.fn("timelineForRun")(function* (
+/** The composition's props for a finished run (pure timeline math over its decoded artifacts). */
+const propsForRun = Effect.fnUntraced(function* (
 	runDir: string,
 	sourceDuration: number,
-	options?: Partial<TimelineOptions>,
-	label?: string
+	settings: RenderSettings,
+	label: string | undefined
 ) {
-	const fs = yield* FileSystem.FileSystem
-	const path = yield* Path.Path
-	const read = <A, I>(file: string, schema: Schema.Codec<A, I>) =>
-		fs
-			.readFileString(path.join(runDir, file))
-			.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(schema))), Effect.mapError(failed(file)))
-	const lines = (yield* fs
-		.readFileString(path.join(runDir, "steps.jsonl"))
-		.pipe(Effect.mapError(failed("steps.jsonl"))))
-		.split("\n")
-		.filter(Boolean)
-	const steps = yield* Effect.forEach(lines, (l) =>
-		Schema.decodeUnknownEffect(Schema.fromJsonString(Step))(l).pipe(Effect.mapError(failed("steps.jsonl")))
+	const steps = yield* readSteps(runDir).pipe(Effect.mapError(failed(RUN_FILES.steps)))
+	const verdict = yield* requireRunFile(runDir, RUN_FILES.verdict, Verdict).pipe(
+		Effect.mapError(failed(RUN_FILES.verdict))
 	)
-	const verdict = yield* read("verdict.json", Verdict)
-	const info = yield* read("run.json", RunInfo).pipe(Effect.option)
+	const info = yield* readRunFile(runDir, RUN_FILES.info, RunInfo).pipe(Effect.mapError(failed(RUN_FILES.info)))
 	const task = Option.match(info, { onNone: () => "Verification", onSome: (i) => i.task })
-	const title = (task.split("\n")[0] ?? "").replace(/^#+\s*/, "").slice(0, 110)
-	return buildTimeline({
-		criteria: verdict.criteria.map((c) => ({
-			description: c.description,
-			explanation: c.explanation,
-			id: c.id,
-			kind: c.kind,
-			screenshot: Option.getOrNull(c.screenshot),
-			status: c.status,
-		})),
-		overall: verdict.overall,
-		sourceDuration,
-		steps: steps.flatMap(({ status, ...s }) =>
-			s.t === undefined ? [] : [{ ...s, t: s.t, ...(typeof status === "string" ? { status } : {}) }]
-		),
-		title,
-		...(options ? { options } : {}),
+	const timeline = buildTimeline({
+		criteria: verdict.criteria.map((c) => ({ ...c, screenshot: Option.getOrNull(c.screenshot) })),
 		meta: {
 			sha: Option.match(info, { onNone: () => "", onSome: (i) => i.sha.slice(0, 7) }),
 			...(label ? { label } : {}),
 		},
+		options: { animate: settings.animate, endCardSec: LAYOUTS[settings.layout].endCardSec },
+		overall: verdict.overall,
+		sourceDuration,
+		steps: steps.flatMap((s) => (s.t === undefined ? [] : [{ ...s, t: s.t }])),
 	})
+	const props: PolishedProps = {
+		layout: settings.layout,
+		timeline,
+		title: reportTitle(task).slice(0, 110),
+		video: "computer/raw.mp4",
+	}
+	return {
+		props,
+		seek: seekOf(
+			timeline,
+			verdict.criteria.map((c) => ({ id: c.id, video_ts: Option.getOrNull(c.video_ts) }))
+		),
+	}
 })
+
+/** Bundles the composition (with the run dir as its public dir) and renders polished.mp4 with Remotion. */
+const remotionRender = (runDir: string, props: PolishedProps, out: string) =>
+	Effect.tryPromise({
+		catch: (e) => new RenderError({ message: `remotion: ${messageOf(e)}` }),
+		try: async () => {
+			const serveUrl = await bundle({ entryPoint: ENTRY, publicDir: runDir })
+			const composition = await selectComposition({ id: "Polished", inputProps: props, serveUrl })
+			await renderMedia({
+				codec: "h264",
+				composition,
+				concurrency: 4,
+				crf: 20,
+				inputProps: props,
+				logLevel: "warn",
+				outputLocation: out,
+				serveUrl,
+			})
+		},
+	})
 
 export const renderRun = Effect.fn("renderRun")(function* (
 	runDirIn: string,
-	opts: {
-		readonly animate?: boolean
-		readonly label?: string
-		readonly layout?: Layout
-		readonly concurrency?: number
-		readonly onProgress?: (line: string) => Effect.Effect<void>
-	} = {}
+	opts: { readonly animate?: boolean; readonly label?: string; readonly layout?: Layout } = {}
 ) {
 	const fs = yield* FileSystem.FileSystem
 	const path = yield* Path.Path
@@ -133,65 +160,16 @@ export const renderRun = Effect.fn("renderRun")(function* (
 	if (!(yield* fs.exists(raw))) {
 		return yield* new RenderError({ message: `no recording at ${raw}` })
 	}
-	const layout = opts.layout ?? "pr"
-	const animate = opts.animate ?? true
-	const timeline = yield* timelineForRun(
-		runDir,
-		yield* probeDuration(raw),
-		renderOptions({ animate, layout }),
-		opts.label
-	)
+	const settings: RenderSettings = { animate: opts.animate ?? true, layout: opts.layout ?? "pr" }
+	const spec = LAYOUTS[settings.layout]
+	const { props, seek } = yield* propsForRun(runDir, yield* probeDuration(raw), settings, opts.label)
+	const { timeline } = props
 
 	const outDir = path.join(runDir, "render")
 	yield* fs.makeDirectory(outDir, { recursive: true })
-	const propsPath = path.join(outDir, "props.json")
-	yield* fs.writeFileString(
-		propsPath,
-		JSON.stringify({ animate, layout, timeline, title: timeline.end.title, video: "computer/raw.mp4" })
-	)
-	yield* fs.writeFileString(path.join(outDir, "timeline.json"), JSON.stringify(timeline, null, 1))
-
+	yield* fs.writeFileString(path.join(outDir, "props.json"), JSON.stringify(props))
 	const polished = path.join(runDir, "polished.mp4")
-	const cli = path.join(
-		path.dirname(createRequire(import.meta.url).resolve("@remotion/cli/package.json")),
-		"remotion-cli.js"
-	)
-	const args = [
-		cli,
-		"render",
-		path.resolve(HERE, "../remotion/index.ts"),
-		"Polished",
-		polished,
-		`--props=${propsPath}`,
-		`--public-dir=${runDir}`,
-		"--codec=h264",
-		"--crf=20",
-		`--concurrency=${opts.concurrency ?? 4}`,
-		"--log=warn",
-	]
-	yield* Effect.scoped(
-		Effect.gen(function* () {
-			const handle = yield* spawner.spawn(
-				ChildProcess.make(process.execPath, args, { cwd: path.resolve(HERE, ".."), stdin: "ignore" })
-			)
-			const tail: string[] = []
-			yield* handle.all.pipe(
-				Stream.decodeText(),
-				Stream.splitLines,
-				Stream.runForEach((line) => {
-					tail.push(line)
-					if (tail.length > 40) {
-						tail.shift()
-					}
-					return opts.onProgress ? opts.onProgress(line) : Effect.void
-				})
-			)
-			const code = yield* handle.exitCode
-			if (code !== ChildProcessSpawner.ExitCode(0)) {
-				return yield* new RenderError({ message: `remotion render exited ${code}:\n${tail.join("\n")}` })
-			}
-		})
-	).pipe(Effect.catchTag("PlatformError", (e) => Effect.fail(new RenderError({ message: `remotion: ${e.message}` }))))
+	yield* remotionRender(runDir, props, polished)
 
 	// 10 s preview: starting shortly before the first failing moment, else at the start.
 	const firstFreeze = timeline.segments.find((s) => s.kind === "freeze")
@@ -218,19 +196,22 @@ export const renderRun = Effect.fn("renderRun")(function* (
 		)
 		.pipe(Effect.mapError(failed("preview.gif")))
 
-	// Hosted captions are a track the page can toggle, not burned into the frame.
 	const vtt = path.join(runDir, "captions.vtt")
-	if (layout === "hosted") {
+	if (spec.captions === "vtt") {
 		yield* fs.writeFileString(vtt, webVtt(captionCues(timeline))).pipe(Effect.mapError(failed("captions.vtt")))
 	} else {
 		yield* fs.remove(vtt, { force: true }).pipe(Effect.mapError(failed("captions.vtt")))
 	}
+
+	const cut: RenderedCut = { ...settings, durationSec: yield* probeDuration(polished), seek }
+	yield* Schema.encodeEffect(RenderedCutJson)(cut).pipe(
+		Effect.flatMap((json) => fs.writeFileString(path.join(outDir, "rendered.json"), json)),
+		Effect.mapError(failed("render/rendered.json"))
+	)
 	return {
-		animate,
-		captions: layout === "hosted" ? Option.some(vtt) : Option.none(),
-		durationSec: yield* probeDuration(polished),
+		...cut,
+		captions: spec.captions === "vtt" ? Option.some(vtt) : Option.none(),
 		gif,
-		layout,
 		polished,
 		timeline,
 	} satisfies RenderResult

@@ -11,7 +11,6 @@
     "fix": "ultracite fix",
     "image:build": "pnpm build:control && docker build -t witness-computer:dev infra/computer",
     "prepare": "husky",
-    "render:run": "tsx packages/renderer/scripts/render.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json && tsc -p packages/renderer/remotion/tsconfig.json && tsc -p apps/web/tsconfig.json --noEmit",
     "web:deploy": "pnpm --filter @witness/web run deploy",
