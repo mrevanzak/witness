@@ -1,6 +1,5 @@
 node_modules/
 runs/
-.witness/
 *.log
 .DS_Store
 dist/

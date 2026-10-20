@@ -21,7 +21,7 @@ import { drive } from "./drive.ts"
 import { init } from "./init.ts"
 import { startLive } from "./live.ts"
 import { publish } from "./publish.ts"
-import { runsDirFor } from "./runs.ts"
+import { runsDirFlag, runsDirFor } from "./runs.ts"
 import { ACTIONS, act, DAEMON_ENV, launchSession, sessionProgram } from "./session.ts"
 import { upload } from "./upload.ts"
 
@@ -62,10 +62,7 @@ const run = Command.make(
 		memoryGb: Flag.Int("memory-gb").pipe(Flag.withDefault(4)),
 		ref: Flag.String("ref").pipe(Flag.withDescription("Commit, branch or tag to verify"), Flag.withDefault("HEAD")),
 		repo: Flag.String("repo").pipe(Flag.withDescription("App directory inside a git repo"), Flag.withDefault(".")),
-		runsDir: Flag.String("runs-dir").pipe(
-			Flag.withDescription("Where run folders go (default: .witness/runs at the current git root)"),
-			Flag.optional
-		),
+		runsDir: runsDirFlag,
 		session: Flag.Boolean("session").pipe(
 			Flag.withDescription(
 				"Session mode: boot, record, and wait for `witness act` commands from the caller (a Claude Code session drives the QA)"
@@ -301,10 +298,7 @@ const actCmd = Command.make(
 			Flag.withDescription("The session's run dir (default: the newest open session)"),
 			Flag.optional
 		),
-		runsDir: Flag.String("runs-dir").pipe(
-			Flag.withDescription("Where run folders are (default: .witness/runs at the current git root)"),
-			Flag.optional
-		),
+		runsDir: runsDirFlag,
 	},
 	Effect.fn(function* (f) {
 		yield* setExit(
