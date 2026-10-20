@@ -38,12 +38,12 @@ Try it on the demo app. `make-fixture.sh` creates a small repo with a correct an
 bash examples/todo-app/make-fixture.sh
 pnpm witness run --repo runs/fixtures/todo-app --ref feat/empty-title-broken --base main \
   --task "Empty todo titles show 'Title is required' and are not added" \
-  --walkthrough examples/todo-app/walkthrough.ts --live
+  --walkthrough examples/todo-app/walkthrough.ts
 pnpm witness render runs/<run-id>
 pnpm witness report runs/<run-id>
 ```
 
-`--live` opens the live view. The run exits with 0 for pass, 1 for fail, 2 for blocked and 3 for usage errors, so it slots into scripts and CI.
+Each run opens a live view in your browser: the desktop as it happens, next to the checklist and the step log. Pass `--no-live` to skip it; CI never opens one. The run exits with 0 for pass, 1 for fail, 2 for blocked and 3 for usage errors, so it slots into scripts and CI.
 
 ## Two ways to drive a run
 
@@ -74,7 +74,14 @@ Walkthroughs are also how you get before and after comparisons. Run the same fil
 
 ## Telling Witness how to boot your app
 
-Add `witness.yaml` to the repo (or keep one outside it and pass `--config`).
+The first time you point Witness at an app, draft its config:
+
+```bash
+pnpm witness init --repo ../my-app
+pnpm witness run --repo ../my-app --config ../my-app/witness.yaml --boot-only
+```
+
+`init` reads the lockfile, package scripts, Playwright's `webServer`, docker compose and `.env.example`, writes `witness.yaml`, and lists what it guessed. `--boot-only` proves the app boots before you spend a real run on it. Commit the file to the repo, or keep it outside and pass `--config`. A full config looks like this:
 
 ```yaml
 setup:
@@ -99,7 +106,8 @@ A config passed with `--config` can also stage files from your machine into the 
 
 | Command | What it does |
 |---|---|
-| `witness run` | verify a ref: boot, check, record, write the verdict (`--live`, `--walkthrough`, `--boot-only`, `--keep`) |
+| `witness init` | draft a `witness.yaml` for an app Witness hasn't run before |
+| `witness run` | verify a ref: boot, check, record, write the verdict (`--walkthrough`, `--boot-only`, `--keep`, `--no-live`) |
 | `witness render <run>` | render `polished.mp4` and `preview.gif` |
 | `witness report <run>` | write `report.md` |
 | `witness compare <before> <after> --out <dir>` | a before/after report folder |
@@ -112,17 +120,16 @@ A config passed with `--config` can also stage files from your machine into the 
 
 `apps/web` is a Cloudflare Worker. Media lives in R2, report rows in D1. Report links use 22-character random ids and are unlisted: anyone with the link can view, nothing is indexed.
 
+The infrastructure is code. [`apps/web/alchemy.run.ts`](apps/web/alchemy.run.ts) declares the bucket, the database (with its migrations) and the Worker with its bindings, and [Alchemy](https://alchemy.run) creates or updates them to match.
+
 ```bash
 cd apps/web
-npx wrangler login
-npx wrangler r2 bucket create witness-reports
-npx wrangler d1 create witness            # put the id in wrangler.jsonc
-npx wrangler d1 migrations apply witness --remote
-npx wrangler secret put UPLOAD_TOKEN
-npx wrangler deploy
+cp .env.example .env                       # set WITNESS_UPLOAD_TOKEN (openssl rand -hex 32)
+pnpm alchemy profile edit --add Cloudflare # once: sign in with OAuth or paste an API token
+pnpm run deploy                            # plan, confirm, create; prints the URL
 ```
 
-Then set `WITNESS_REPORTS_URL` and `WITNESS_UPLOAD_TOKEN` where you run the CLI. For local work, `pnpm --filter @witness/web dev` runs the Worker with local R2 and D1.
+Then set `WITNESS_REPORTS_URL` (the printed URL) and `WITNESS_UPLOAD_TOKEN` where you run the CLI. `pnpm run plan` shows what a deploy would change, `pnpm run destroy` removes everything, and `WITNESS_DOMAIN` in `.env` serves reports from your own domain. `pnpm run dev` runs the whole stack locally (the Worker in workerd, R2 and D1 emulated) without a Cloudflare account. Alchemy keeps its state in your Cloudflare account, so CI can deploy too: set `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` and `WITNESS_UPLOAD_TOKEN`.
 
 ## How it works
 

@@ -12,6 +12,7 @@ Choices that shaped Witness and why. When you change one, update it here.
 
 - **Effect 4 end to end.** Every boundary is a `Context.Service` with a `Layer`: the computer, the control server inside it, git, the model, the planner, the executor, the reviewer, walkthroughs, the CLI and the Worker. Expected failures are `Schema.TaggedError`s with specific tags (`AppBootFailed`, `ControlError`, `ModelBudgetExceeded`, `ReportNotFound`). Data crossing a boundary goes through `Schema`: `witness.yaml`, run artifacts, the control protocol, model output, page snapshots, the report API. Pure math (zoom, pacing, tar headers, range parsing, diff fitting) stays plain functions.
 - **A computer's lifetime is a `Scope`.** `ComputerProvider.create` acquires the network and container and releases them when the scope closes, so a run can't leak a container on any exit path. `--keep` swaps the release for a log line.
+- **Kebab-case file names.** `docker-provider.ts` holds `DockerComputerProvider`; names inside files stay PascalCase for services and classes.
 - **Remotion for the video.** The composition is React; the driver that renders it is Effect. Remotion's license (free up to three people per company) is called out in the README.
 
 ## The computer
@@ -39,12 +40,14 @@ Choices that shaped Witness and why. When you change one, update it here.
 ## Outputs
 
 - **Video look:** dark neutral canvas, IBM Plex, the app in a hairline frame, a criteria rail that fills in, captions under the frame instead of over the app, source timecode, and an evidence tape with one segment per criterion.
-- **Live view:** run log and step events go through `CurrentRun.publish` into a `PubSub` and out as Server-Sent Events with a replay buffer. The desktop is noVNC lite, view-only, with its status bar cropped off; websockify listens on all interfaces inside the container while the published port stays on host loopback.
+- **Live view, on by default:** every run opens it (`--no-live` turns it off, CI never opens a browser), because watching the run is how you trust it. Run log and step events go through `CurrentRun.publish` into a `PubSub` and out as Server-Sent Events with a replay buffer. The desktop is noVNC lite, view-only, with its status bar cropped off; websockify listens on all interfaces inside the container while the published port stays on host loopback.
 - **PR publishing:** your own PR gets the report in its description between `<!-- witness:start -->` and `<!-- witness:end -->` (replaced on re-runs, inserted above bot footers); someone else's PR gets a comment. Media upload goes through the PR's comment box in a browser signed in to GitHub, so images and video are hosted by GitHub.
 - **Hosted reports:** a Cloudflare Worker with media in R2 and rows in D1. Report ids are 22 random base62 characters (about 131 bits) and the only thing granting access; pages send `noindex` and `no-referrer`. Uploads need a bearer token compared in constant time. Media supports HTTP ranges so the video seeks. Each criterion's recording time is mapped onto the polished video at upload, so the page's time buttons jump to where the check is shown.
+- **Infrastructure as code with Alchemy 2.** `apps/web/alchemy.run.ts` declares the R2 bucket, the D1 database with its migrations, and the Worker with its bindings; deploy, plan and destroy work from it, and `alchemy dev` runs the stack locally with no account. Alchemy 2 is itself built on Effect, which keeps the infra in the same language as the rest. The Worker stays a plain module whose `Env` type comes from the stack (`InferEnv`), so a binding can't drift from the code that reads it. Alchemy 2 is a beta, pinned to an exact version. Its state lives in the Cloudflare account, so CI and a laptop deploy the same stack.
 
 ## Configuration
 
+- **`witness init` drafts, `--boot-only` proves.** The draft comes from what the repo already declares (lockfile, scripts, Playwright `webServer`, compose, `.env.example`), with every guess listed. It never guesses secrets.
 - **`witness.yaml`** is snake_case on disk and decodes to a camelCase config with defaults applied. Unknown keys are errors.
 - **Verifier-side configs** (`--config`) may stage host files and a secret env file. A config inside the repo under test may not, so a PR can't make Witness read files from your machine.
 - **Private configs for your own apps live in `local/`**, which is gitignored.

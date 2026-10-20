@@ -31,22 +31,30 @@ The codebase is written in Effect 4 end to end: services and layers for every bo
 - **Check:** `pnpm acceptance:phase4` passes on a failing run; `witness --help` lists every command.
 
 ### M5. Live view
-- [x] `witness run --live` serves a local page: the computer's desktop streamed through noVNC (view only), the criteria checklist and the step log updating as they happen.
+- [x] `witness run` serves a local page: the computer's desktop streamed through noVNC (view only), the criteria checklist and the step log updating as they happen.
+- [x] On by default and opened in the browser for whoever started the run; `--no-live` and CI skip it.
 - **Check:** during a run, the page shows the desktop moving and each step appearing within a second of it happening.
 
 ### M6. Hosted reports on Cloudflare
 - [x] `apps/web`: a Worker on Effect `HttpApi`; R2 for media, D1 for runs. Unlisted report pages at unguessable URLs, video streaming with range requests, an upload API behind a token.
 - [x] `witness upload <run> [<after-run>]` publishes a run (or a before/after pair) and prints its URL.
 - [ ] `witness publish` can link the hosted report instead of uploading through GitHub.
+- [x] Infrastructure in code: `apps/web/alchemy.run.ts` (Alchemy 2) declares the bucket, the database with migrations, and the Worker with its bindings and upload token.
 - [x] Report page in the Witness look (quiet neutral, IBM Plex), with clickable timestamps that seek the video.
-- **Check:** `wrangler dev` end to end locally (done: upload, page, seeking, 206 ranges, auth, noindex); then deployed, and the PR #453 report opens from its URL on another device.
+- **Check:** `pnpm run dev` (Alchemy) end to end locally (done: upload, page, seeking, 206 ranges, auth); then `pnpm run deploy`, and the PR #453 report opens from its URL on another device.
 
 ### M7. Open-source ready
-- [ ] README for a public project (what it is, why, quick start, how it works, credits), MIT license, CONTRIBUTING, CI (typecheck + unit tests), issue templates.
+- [x] README for a public project (what it is, why, quick start, how it works, credits), MIT license, CONTRIBUTING, CI (typecheck + unit tests), issue templates.
+- [x] Kebab-case file names throughout.
 - [ ] No employer-specific material in the repo; example configs only for the demo app.
 - **Check:** a fresh clone builds and runs `pnpm test` and `pnpm witness:smoke` from the README alone.
 
-### M8. Faster repeat runs
+### M8. First run on a new app
+- [x] `witness init` drafts `witness.yaml` from the lockfile, package scripts, Playwright `webServer`, docker compose and `.env.example`, and lists every guess.
+- [x] The skill drafts with `init`, finishes the config from the repo's QA docs, and proves it with `--boot-only` before a real run.
+- **Check:** `init` then `--boot-only` boots the demo app with no edits (done, 1.2 s); on a real monorepo the draft finds the e2e start command.
+
+### M9. Faster repeat runs
 - [ ] Persistent pnpm store volume shared across runs.
 - [ ] Snapshot the computer after `setup`, keyed by lockfile + seed inputs, so repeat runs of a PR skip straight to `start`.
 - [ ] Independent mode: a faster model for the step loop, Opus for plan and review.

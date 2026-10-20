@@ -15,6 +15,7 @@ pnpm e2e:scripted         # the whole pipeline on the demo app, no API key neede
 ## How the code is written
 
 - Effect 4 everywhere: `Context.Service` + `Layer` for anything with dependencies, `Schema.TaggedError` for expected failures, `Schema` at every boundary (files, HTTP, the model, the page). Pure math (zoom, pacing, tar headers, range parsing) stays plain functions with plain tests.
+- File names are kebab-case (`docker-provider.ts`, `report-api.ts`); the services and classes inside keep their PascalCase names.
 - Errors carry a specific tag and a message a person can act on. A boot failure is a `blocked` verdict, not a crash.
 - Secrets never reach logs, steps, captions, transcripts or reports. If you add an output, run it through the run's redaction.
 - The verifier observes. Nothing in it may edit the code under test or push anything.
