@@ -15,3 +15,5 @@ examples/*/sb.env
 examples/moumint/
 infra/publish/
 infra/computer/control/dist/
+.dev.vars
+.wrangler/

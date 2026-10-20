@@ -35,10 +35,11 @@ The codebase is written in Effect 4 end to end: services and layers for every bo
 - **Check:** during a run, the page shows the desktop moving and each step appearing within a second of it happening.
 
 ### M6. Hosted reports on Cloudflare
-- [ ] `apps/web`: a Worker on Effect `HttpApi`; R2 for media, D1 for runs. Unlisted report pages at unguessable URLs, video streaming with range requests, an upload API behind a token.
-- [ ] `witness upload <run|bundle>` publishes a run and prints its URL; `witness publish` can link the hosted report instead of uploading through GitHub.
-- [ ] Report page in the Witness look (quiet neutral, IBM Plex), with clickable timestamps that seek the video.
-- **Check:** `wrangler dev` end to end locally; then deployed, and the PR #453 report opens from its URL on another device.
+- [x] `apps/web`: a Worker on Effect `HttpApi`; R2 for media, D1 for runs. Unlisted report pages at unguessable URLs, video streaming with range requests, an upload API behind a token.
+- [x] `witness upload <run> [<after-run>]` publishes a run (or a before/after pair) and prints its URL.
+- [ ] `witness publish` can link the hosted report instead of uploading through GitHub.
+- [x] Report page in the Witness look (quiet neutral, IBM Plex), with clickable timestamps that seek the video.
+- **Check:** `wrangler dev` end to end locally (done: upload, page, seeking, 206 ranges, auth, noindex); then deployed, and the PR #453 report opens from its URL on another device.
 
 ### M7. Open-source ready
 - [ ] README for a public project (what it is, why, quick start, how it works, credits), MIT license, CONTRIBUTING, CI (typecheck + unit tests), issue templates.

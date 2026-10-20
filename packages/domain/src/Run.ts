@@ -1,6 +1,6 @@
 // Run artifacts: plan.json, steps.jsonl, verdict.json, walkthrough.json and the
 // manifest uploaded to the hosted viewer. Encoded shapes are the files on disk.
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 import { CriterionKind, CriterionStatus } from "./Ids.ts"
 
 export class Criterion extends Schema.Class<Criterion>("@witness/Criterion")({
@@ -139,6 +139,8 @@ export class ReportSection extends Schema.Class<ReportSection>("@witness/ReportS
 	/** Uploaded media paths, relative to the report. */
 	video: Schema.optionalKey(Schema.String),
 	gif: Schema.optionalKey(Schema.String),
+	/** Per criterion: [start, end] seconds in the polished video (where its check is shown). */
+	seek: Schema.Record(Schema.String, Schema.Tuple([Schema.Finite, Schema.Finite])).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
 }) {}
 
 export class ReportManifest extends Schema.Class<ReportManifest>("@witness/ReportManifest")({

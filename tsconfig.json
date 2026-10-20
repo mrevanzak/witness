@@ -33,6 +33,7 @@
     "packages/*/test"
   ],
   "exclude": [
+    "apps/web",
     "packages/renderer/remotion"
   ]
 }

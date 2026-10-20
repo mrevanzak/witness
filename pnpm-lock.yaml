@@ -60,6 +60,22 @@ importers:
         specifier: 4.23.15
         version: 4.23.15
 
+  apps/web:
+    dependencies:
+      '@effect/sql-d1':
+        specifier: 4.0.5
+        version: 4.0.5(effect@4.0.5)
+      '@witness/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      effect:
+        specifier: 4.0.5
+        version: 4.0.5
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: 4.20260702.1
+        version: 4.20260702.1
+
   packages/computer:
     dependencies:
       '@effect/platform-node':
@@ -234,6 +250,12 @@ packages:
   '@balena/dockerignore@1.0.2':
     resolution: {integrity: sha512-wMue2Sy4GAVTk6Ic4tJVcnfdau+gx2EnG7S+uAEe+TWJFqE4YoWN4/H8MSLj4eYJKxGg26lZwboEniNiNwZQ6Q==}
 
+  '@cloudflare/workers-types@4.20260702.1':
+    resolution: {integrity: sha512-mOhf5TUEB1m2vPrxtqoIGfz0fUC9xyxRDx5gWHy5s+OCo6dcV+g7wI1R7gYCMFohhqF/2y2xeKVwMwCJjfn/WA==}
+
+  '@cloudflare/workers-types@5.20261019.1':
+    resolution: {integrity: sha512-llvvy7WBVhK+OfykyBkG9A7OgsGvgwHSNyU40XGVkiy/xVFy0t/xflyhEBHT+U59yQECZQbmcZsJtqCNnLpIRg==}
+
   '@effect/language-service@0.87.5':
     resolution: {integrity: sha512-np/zJgk71/PyHxtoqyUKLYcpQhoRBI+L6+1Z0ILk35JSQ/lvXzwlwOwddYZLDkeC4bdF2ukKekqKlla/F88R5w==}
     hasBin: true
@@ -250,6 +272,11 @@ packages:
     peerDependencies:
       effect: ^4.0.5
       redis: '>=5.0.0 <7.0.0'
+
+  '@effect/sql-d1@4.0.5':
+    resolution: {integrity: sha512-ERArvCS/qOHx52yKFePc8v5qs0y18Ld+Ha6Xkkm/I1R+zTf+flfWpsuxlxkPKlwQCqB9K+yfU6Kw1gshKGRCPQ==}
+    peerDependencies:
+      effect: ^4.0.5
 
   '@effect/vitest@4.0.5':
     resolution: {integrity: sha512-q64paZ/i4V2NiRhTyqCmT2KiDbFjlxc2EZrZca8GGt+Nf8844946HyJM5bPk/q+YeRkFSxIrlCs+J+LSfky/wA==}
@@ -2581,6 +2608,10 @@ snapshots:
 
   '@balena/dockerignore@1.0.2': {}
 
+  '@cloudflare/workers-types@4.20260702.1': {}
+
+  '@cloudflare/workers-types@5.20261019.1': {}
+
   '@effect/language-service@0.87.5': {}
 
   '@effect/platform-node-shared@4.0.5(effect@4.0.5)':
@@ -2601,6 +2632,11 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  '@effect/sql-d1@4.0.5(effect@4.0.5)':
+    dependencies:
+      '@cloudflare/workers-types': 5.20261019.1
+      effect: 4.0.5
 
   '@effect/vitest@4.0.5(effect@4.0.5)(vitest@5.0.5(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(vite@7.3.7(@types/node@22.20.5)(terser@5.51.2)(tsx@4.23.15)(yaml@2.8.1)))':
     dependencies:

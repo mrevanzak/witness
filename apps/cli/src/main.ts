@@ -14,6 +14,7 @@ import { pathToFileURL } from "node:url"
 import { drive } from "./Drive.ts"
 import { startLive } from "./Live.ts"
 import { publish } from "./Publish.ts"
+import { upload } from "./Upload.ts"
 
 /** The CLI was used wrongly (missing task, bad walkthrough file). */
 class UsageError extends Schema.TaggedError<UsageError>()("UsageError", { message: Schema.String }) {}
@@ -168,6 +169,23 @@ const publishCmd = Command.make(
 	})
 ).pipe(Command.withDescription("Put a report on a PR: your PR's description, or a comment on someone else's"))
 
+const uploadCmd = Command.make(
+	"upload",
+	{
+		runs: Argument.String("run-dir").pipe(Argument.variadic({ min: 1, max: 2 })),
+		title: Flag.String("title").pipe(Flag.optional),
+		pr: Flag.String("pr").pipe(Flag.withDescription("PR number shown on the page"), Flag.optional),
+		repoName: Flag.String("repo-name").pipe(Flag.optional),
+		preview: Flag.String("preview").pipe(Flag.optional),
+		note: Flag.String("note").pipe(Flag.optional),
+	},
+	Effect.fn(function* (f) {
+		// One run, or two as before/after (the second counts).
+		const runs = f.runs.length === 2 ? [{ dir: f.runs[0]!, label: "before" }, { dir: f.runs[1]!, label: "after" }] : [{ dir: f.runs[0]!, label: "run" }]
+		yield* upload({ runs, title: f.title, pr: f.pr, repo: f.repoName, preview: f.preview, notes: Option.toArray(f.note) })
+	})
+).pipe(Command.withDescription("Publish a run (or a before/after pair) as an unlisted hosted report; needs WITNESS_REPORTS_URL and WITNESS_UPLOAD_TOKEN"))
+
 const cleanup = Command.make(
 	"cleanup",
 	{},
@@ -179,7 +197,7 @@ const cleanup = Command.make(
 
 const witness = Command.make("witness").pipe(
 	Command.withDescription("Independent, recorded QA for code changes made by AI agents or humans"),
-	Command.withSubcommands([run, render, report, compare, driveCmd, publishCmd, cleanup])
+	Command.withSubcommands([run, render, report, compare, uploadCmd, driveCmd, publishCmd, cleanup])
 )
 
 const Services = Layer.mergeAll(Git.layer, DockerComputerProvider).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)))
