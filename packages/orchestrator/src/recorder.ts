@@ -143,9 +143,7 @@ export type Recorded = {
 }
 
 export type RecorderApi = {
-	readonly config: WitnessConfig
 	readonly runDir: string
-	readonly space: ShotSpace
 	/** The screen when the recorder started. */
 	readonly first: Screenshot
 	readonly state: Effect.Effect<RecorderState>
@@ -282,12 +280,14 @@ export const makeRecorder = Effect.fn("makeRecorder")(function* (
 	) {
 		yield* drain
 		const full = yield* computer.screenshot().pipe(Effect.mapError(failed("screenshot")))
+		const evidence = yield* computer.screenshot(shot).pipe(Effect.option)
 		const file = `${id.toLowerCase()}-${status}.png`
 		yield* run.writeBytes(file, full.data).pipe(Effect.mapError(failed("write")))
 		const clean = redact(notes, secrets)
 		yield* update(id, (r) => ({
 			...r,
 			endedAt: full.at,
+			evidence: Option.getOrUndefined(evidence),
 			forced: Option.getOrUndefined(forced),
 			notes: clean,
 			screenshot: file,
@@ -549,5 +549,5 @@ export const makeRecorder = Effect.fn("makeRecorder")(function* (
 
 	// Boot noise is not blamed on the first criterion.
 	yield* drain
-	return { config, finish, first, perform, runDir: run.dir, space, state } satisfies RecorderApi
+	return { finish, first, perform, runDir: run.dir, state } satisfies RecorderApi
 })

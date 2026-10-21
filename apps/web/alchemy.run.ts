@@ -1,6 +1,6 @@
-// Infrastructure for hosted reports: an R2 bucket for media, a D1 database
-// for report rows, and the Worker that serves both. `pnpm deploy` creates or
-// updates all of it; `pnpm destroy` removes it.
+// Infrastructure for hosted reports: an R2 bucket for manifests and media, and
+// the Worker that serves it. `pnpm deploy` creates or updates both; `pnpm destroy`
+// removes them.
 //
 // Config read at deploy time:
 //   WITNESS_UPLOAD_TOKEN  bearer token the CLI uploads with (bound as a secret)
@@ -10,7 +10,7 @@ import * as Cloudflare from "alchemy/Cloudflare"
 import { Config, Effect, Option } from "effect"
 
 // Prod resources are plain `witness`; other stages get a suffix (`witness-dev`).
-// Bucket, database and Worker live in separate namespaces, so they share it.
+// Bucket and Worker live in separate namespaces, so they share it.
 const resourceName = Effect.gen(function* () {
 	const stage = yield* Alchemy.Stage
 	return stage === "prod" ? "witness" : `witness-${stage}`
@@ -19,11 +19,6 @@ const resourceName = Effect.gen(function* () {
 export const Media = Cloudflare.R2.Bucket(
 	"Media",
 	Effect.map(resourceName, (name) => ({ name }))
-)
-
-export const Db = Cloudflare.D1.Database(
-	"Db",
-	Effect.map(resourceName, (name) => ({ migrations: "./migrations", name }))
 )
 
 export const Reports = Cloudflare.Worker(
@@ -36,7 +31,6 @@ export const Reports = Cloudflare.Worker(
 			name: yield* resourceName,
 			...Option.match(domain, { onNone: () => ({}), onSome: (name) => ({ domain: name }) }),
 			env: {
-				DB: Db,
 				MEDIA: Media,
 				// Report links use the Worker's canonical URL: the custom domain if set.
 				PUBLIC_URL: Cloudflare.Worker.URL,

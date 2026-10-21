@@ -50,9 +50,7 @@ export const runSession = Effect.fn("runSession")(function* (
 		Option.match(error, { onNone: () => "not reached in the session", onSome: (m) => `session stopped: ${m}` })
 	)
 	return {
-		console: recorded.console,
-		network: recorded.network,
-		records: recorded.records,
+		...recorded,
 		report: Option.some(
 			new WalkthroughReport({
 				...recorded.report,

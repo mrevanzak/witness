@@ -159,9 +159,9 @@ The report goes into your own PR's description (between `<!-- witness:start/end 
 
 ## Hosted reports on Cloudflare
 
-`apps/web` is a Cloudflare Worker. Media lives in R2, report rows in D1. Report links use 22-character random ids and are unlisted: anyone with the link can view, nothing is indexed.
+`apps/web` is a Cloudflare Worker. Manifests and media live in R2. Report links use 22-character random ids and are unlisted: anyone with the link can view, nothing is indexed.
 
-The infrastructure is code. [`apps/web/alchemy.run.ts`](apps/web/alchemy.run.ts) declares the bucket, the database (with its migrations) and the Worker with its bindings, and [Alchemy](https://alchemy.run) creates or updates them to match. Deploying needs a clone of this repo with `pnpm install` run.
+The infrastructure is code. [`apps/web/alchemy.run.ts`](apps/web/alchemy.run.ts) declares the bucket and the Worker with its bindings, and [Alchemy](https://alchemy.run) creates or updates them to match. Deploying needs a clone of this repo with `pnpm install` run.
 
 ```bash
 cp apps/web/.env.example apps/web/.env     # set WITNESS_UPLOAD_TOKEN (openssl rand -hex 32)
@@ -169,7 +169,7 @@ pnpm --filter @witness/web exec alchemy profile edit --add Cloudflare  # once: s
 pnpm web:deploy                            # plan, confirm, create; prints the URL
 ```
 
-Then set `WITNESS_REPORTS_URL` (the printed URL) and `WITNESS_UPLOAD_TOKEN` wherever your agent runs. `pnpm web:plan` shows what a deploy would change, `pnpm web:destroy` removes everything, and `WITNESS_DOMAIN` in `apps/web/.env` serves reports from your own domain. `pnpm web:dev` runs the whole stack locally (the Worker in workerd, R2 and D1 emulated) without a Cloudflare account. Alchemy keeps its state in your Cloudflare account, so CI can deploy too: set `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` and `WITNESS_UPLOAD_TOKEN`.
+Then set `WITNESS_REPORTS_URL` (the printed URL) and `WITNESS_UPLOAD_TOKEN` wherever your agent runs. `pnpm web:plan` shows what a deploy would change, `pnpm web:destroy` removes everything, and `WITNESS_DOMAIN` in `apps/web/.env` serves reports from your own domain. `pnpm web:dev` runs the whole stack locally (the Worker in workerd, R2 emulated) without a Cloudflare account. Alchemy keeps its state in your Cloudflare account, so CI can deploy too: set `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` and `WITNESS_UPLOAD_TOKEN`.
 
 ## How it works
 

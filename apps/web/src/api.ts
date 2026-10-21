@@ -12,7 +12,7 @@ import {
 import { Effect, Layer, Option, Redacted, Schema } from "effect"
 import { HttpServerRequest } from "effect/http"
 import { HttpApiBuilder } from "effect/http-api"
-import { Bindings, ReportStore, ReportsRepo } from "./storage.ts"
+import { Bindings, ReportStore } from "./storage.ts"
 
 const MAX_FILE_BYTES = 95 * 1024 * 1024
 
@@ -68,10 +68,9 @@ export const ReportsHandlers = HttpApiBuilder.group(
 	"reports",
 	Effect.fn(function* (handlers) {
 		const store = yield* ReportStore
-		const repo = yield* ReportsRepo
 		const { publicUrl } = yield* Bindings
 		const exists = (id: ReportId) =>
-			repo.status(id).pipe(
+			store.status(id).pipe(
 				Effect.flatMap(
 					Option.match({
 						onNone: () => Effect.fail(new ReportNotFound({ id, message: `no report ${id}` })),
@@ -83,13 +82,12 @@ export const ReportsHandlers = HttpApiBuilder.group(
 		return handlers.handleAll({
 			create: Effect.fn(function* ({ payload }) {
 				const id = newReportId()
-				yield* repo.insert(id, payload)
-				yield* store.putManifest(id, payload)
+				yield* store.create(id, payload)
 				return { id, url: yield* reportUrl(publicUrl, id) }
 			}),
 			finalize: Effect.fn(function* ({ params }) {
 				yield* exists(params.id)
-				yield* repo.setReady(params.id)
+				yield* store.finalize(params.id)
 				return { id: params.id, url: yield* reportUrl(publicUrl, params.id) }
 			}),
 			putFile: Effect.fn(function* ({ params, payload }) {

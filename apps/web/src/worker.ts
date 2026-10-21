@@ -1,6 +1,5 @@
 // Cloudflare Worker for hosted Witness reports. One Effect web handler per
 // isolate, built from the bindings on the first request.
-import { D1Client } from "@effect/sql-d1"
 import { MANIFEST_FILE, ReportApi, ReportFileName, ReportId, type ReportStorageError } from "@witness/domain"
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect"
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"
@@ -8,9 +7,9 @@ import { HttpApiBuilder } from "effect/http-api"
 import type { WorkerEnv } from "../alchemy.run.ts"
 import { ReportsHandlers, UploadAuthLive } from "./api.ts"
 import { notFoundPage, reportPage } from "./page.ts"
-import { Bindings, ReportStore, ReportsRepo } from "./storage.ts"
+import { Bindings, ReportStore } from "./storage.ts"
 
-/** Bindings declared in alchemy.run.ts: MEDIA (R2), DB (D1), UPLOAD_TOKEN, PUBLIC_URL. */
+/** Bindings declared in alchemy.run.ts: MEDIA (R2), UPLOAD_TOKEN, PUBLIC_URL. */
 export type Env = WorkerEnv
 
 const isReportId = Schema.is(ReportId)
@@ -40,10 +39,7 @@ const PageRoutes = Layer.mergeAll(
 			if (!isReportId(id)) {
 				return notFound
 			}
-			const status = yield* ReportsRepo.use((r) => r.status(id))
-			if (Option.isNone(status) || status.value !== "ready") {
-				return notFound
-			}
+			// Only finalized reports have a manifest here.
 			const manifest = yield* ReportStore.use((s) => s.manifest(id))
 			if (Option.isNone(manifest)) {
 				return notFound
@@ -105,10 +101,7 @@ const makeHandler = (env: Env) => {
 			uploadToken: env.UPLOAD_TOKEN ?? "",
 		})
 	)
-	const storage = Layer.mergeAll(
-		ReportStore.layer,
-		ReportsRepo.layer.pipe(Layer.provide(D1Client.layer({ db: env.DB })))
-	).pipe(Layer.provideMerge(bindings))
+	const storage = ReportStore.layer.pipe(Layer.provideMerge(bindings))
 	const api = HttpApiBuilder.layer(ReportApi).pipe(Layer.provide(ReportsHandlers), Layer.provide(UploadAuthLive))
 	const pages = PageRoutes.pipe(HttpRouter.provideRequest(storage))
 	const routes = Layer.mergeAll(api, pages).pipe(Layer.provide(storage), Layer.provide(HttpServer.layerServices))

@@ -326,6 +326,7 @@ export const specOutcome = (
 			console: [],
 			criterion: new Criterion({ description, id, kind }),
 			endedAt,
+			evidence: undefined,
 			forced: end ? undefined : "spec",
 			network: [],
 			notes: criterionNotes,

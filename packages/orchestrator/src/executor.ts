@@ -35,9 +35,6 @@ export const defaultExecuteOptions: ExecuteOptions = {
 	maxWallMs: 10 * 60_000,
 }
 
-/** The downscaled final screenshot of each criterion, for the reviewer. */
-export type Evidence = ReadonlyMap<string, { readonly data: string; readonly mime: "image/jpeg" | "image/png" }>
-
 // A tool input field: its JSON Schema for the model and its decoder, from one definition.
 type Field<A> = { readonly json: object; readonly schema: Schema.Codec<A, unknown> }
 const field = <A>(schema: Schema.Codec<A, unknown>, json: object): Field<A> => ({ json, schema })
@@ -246,13 +243,6 @@ export const execute = Effect.fn("execute")(function* (
 	const hasSecret = Option.isSome(Option.flatMap(config.login, (l) => Option.fromUndefinedOr(l.password)))
 	const started = yield* Clock.currentTimeMillis
 	const recorder = yield* makeRecorder(computer, config, plan.criteria, o.imageWidth)
-	const evidence = new Map<string, { readonly data: string; readonly mime: "image/jpeg" | "image/png" }>()
-	const shot = { format: "jpeg", quality: 80, width: o.imageWidth } as const
-	const keepEvidence = (id: string) =>
-		computer.screenshot(shot).pipe(
-			Effect.map((s) => evidence.set(id, { data: base64(s), mime: s.mime })),
-			Effect.ignore
-		)
 	const stuck = new StuckDetector(3)
 	let totalSteps = 0
 
@@ -267,7 +257,6 @@ export const execute = Effect.fn("execute")(function* (
 		const done = yield* recorder.perform(call)
 		if (call._tag === "End") {
 			stuck.reset()
-			yield* keepEvidence(call.id)
 			const all = (yield* recorder.state).unfinished.length === 0
 			return [text(all ? `${done.text} Reply with your summary.` : done.text)]
 		}
@@ -436,7 +425,7 @@ export const execute = Effect.fn("execute")(function* (
 						status: "blocked",
 					})
 				)
-				.pipe(Effect.andThen(keepEvidence(id)), Effect.ignore)
+				.pipe(Effect.ignore)
 		}
 		const after = yield* recorder.state
 		if (after.unfinished.length === 0 && Option.isNone(after.active)) {
@@ -447,12 +436,6 @@ export const execute = Effect.fn("execute")(function* (
 
 	// Anything not ended is blocked, with the reason the loop stopped.
 	const recorded = yield* recorder.finish(stoppedBecause, stoppedNotes(o)[stoppedBecause])
-	const last = yield* computer.screenshot(shot).pipe(Effect.option)
-	for (const r of recorded.records) {
-		if (!evidence.has(r.criterion.id) && Option.isSome(last)) {
-			evidence.set(r.criterion.id, { data: base64(last.value), mime: last.value.mime })
-		}
-	}
 
 	// The transcript is for auditing; images become size placeholders.
 	const transcript = redact(
@@ -468,15 +451,5 @@ export const execute = Effect.fn("execute")(function* (
 	)
 	yield* run.writeText("transcript.json", transcript).pipe(Effect.orDie)
 
-	return {
-		evidence: evidence as Evidence,
-		run: {
-			console: recorded.console,
-			network: recorded.network,
-			records: recorded.records,
-			report: Option.none(),
-			stoppedBecause,
-			summary: redact(summary, secrets),
-		} satisfies ModeRun,
-	}
+	return { ...recorded, report: Option.none(), stoppedBecause, summary: redact(summary, secrets) } satisfies ModeRun
 })

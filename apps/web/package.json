@@ -10,7 +10,6 @@
     "plan": "alchemy plan --stage prod"
   },
   "dependencies": {
-    "@effect/sql-d1": "4.0.5",
     "@witness/domain": "workspace:*",
     "effect": "4.0.5"
   },

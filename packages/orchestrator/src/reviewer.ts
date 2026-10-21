@@ -7,7 +7,6 @@ import { type AgentPlan, redact, type Step } from "@witness/domain"
 import { Effect, Option } from "effect"
 import { type ModeRun, ReviewOutput, testerReview } from "./criteria.ts"
 import { CurrentRun } from "./current-run.ts"
-import type { Evidence } from "./executor.ts"
 import { Model } from "./model.ts"
 import { networkLine } from "./recorder.ts"
 
@@ -35,7 +34,6 @@ type Content = Exclude<Anthropic.Beta.Messages.BetaMessageParam["content"], stri
 export const review = Effect.fn("review")(function* (
 	plan: AgentPlan,
 	run: ModeRun,
-	evidence: Evidence,
 	steps: readonly Step[],
 	appLogTail: string
 ) {
@@ -69,9 +67,11 @@ export const review = Effect.fn("review")(function* (
 			].join("\n"),
 			type: "text",
 		})
-		const shot = evidence.get(c.id)
-		if (shot) {
-			content.push({ source: { data: shot.data, media_type: shot.mime, type: "base64" }, type: "image" })
+		if (r.evidence) {
+			content.push({
+				source: { data: Buffer.from(r.evidence.data).toString("base64"), media_type: r.evidence.mime, type: "base64" },
+				type: "image",
+			})
 		}
 	}
 	content.push({
