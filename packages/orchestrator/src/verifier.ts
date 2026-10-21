@@ -15,7 +15,7 @@ import {
 	type Criterion,
 	configSecrets,
 	type EvidenceStates,
-	EXIT_CODES,
+	exitCodeOf,
 	messageOf,
 	Plan,
 	parseEnvFile,
@@ -90,9 +90,9 @@ export const exitCodeOfResult = (r: RunResult): number => {
 		case "Booted":
 			return 0
 		case "Blocked":
-			return EXIT_CODES.blocked
+			return exitCodeOf(r.blocked)
 		case "Verified":
-			return EXIT_CODES[r.verdict.overall]
+			return exitCodeOf(r.verdict)
 	}
 }
 
@@ -261,8 +261,8 @@ const recordMode = (computer: Computer, side: Side, mode: Exclude<Prepared, { _t
 				const appLogTail = yield* computer.logs("app.log", 120).pipe(Effect.orElseSucceed(() => ""))
 				const judged: Judged = {
 					modelId: model.id,
-					review: yield* review(mode.plan, r.produced.run, r.produced.evidence, r.steps, appLogTail),
-					run: r.produced.run,
+					review: yield* review(mode.plan, r.produced, r.steps, appLogTail),
+					run: r.produced,
 				}
 				return { ...r, judged, summary: mode.plan.summary, usage: yield* model.usage }
 			}
@@ -379,10 +379,7 @@ const runSide = (opts: VerifyOptions, side: Side) =>
 		)
 	)
 
-/**
- * What each side runs. Agent mode plans once, from the change, and the base commit
- * checks the same plan; a session's change side starts with the base commit's criteria.
- */
+/** What each side runs. Agent mode plans once, from the change, and the base commit checks the same plan. */
 const preparer = Effect.fnUntraced(function* (mode: VerifyMode, change: Change, config: WitnessConfig) {
 	switch (mode._tag) {
 		case "Agent": {
@@ -392,13 +389,13 @@ const preparer = Effect.fnUntraced(function* (mode: VerifyMode, change: Change, 
 			yield* run.log("plan.done", {
 				criteria: plan.criteria.map((c) => ({ description: c.description, id: c.id, kind: c.kind })),
 			})
-			return (_carried: readonly Criterion[]): Prepared => ({ _tag: "Agent", execute: mode.execute, plan })
+			return { _tag: "Agent", execute: mode.execute, plan } satisfies Prepared
 		}
 		case "Session":
-			return (carried: readonly Criterion[]): Prepared => ({ _tag: "Session", carried, program: mode.program })
+			return { _tag: "Session", carried: [], program: mode.program } satisfies Prepared
 		case "Spec":
 		case "BootOnly":
-			return (_carried: readonly Criterion[]): Prepared => mode
+			return mode
 	}
 })
 
@@ -471,21 +468,24 @@ export const verify = Effect.fn("verify")(function* (opts: VerifyOptions) {
 		yield* run.log("before.skipped", { reason: "no base commit to compare with (pass --base)" })
 	}
 	const baseSha = wantBefore ? repo.baseSha : Option.none<string>()
-	const side = (state: Option.Option<"before" | "after">, carried: readonly Criterion[]): Side =>
-		Option.match(
+	// A session's change side starts with the criteria declared on the base commit.
+	const side = (state: Option.Option<"before" | "after">, carried: readonly Criterion[]): Side => {
+		const prepared: Prepared = prepare.success._tag === "Session" ? { ...prepare.success, carried } : prepare.success
+		return Option.match(
 			Option.filter(baseSha, () => Option.contains(state, "before")),
 			{
-				onNone: () => ({ change, config, keep: opts.keep, mode: prepare.success(carried), staged, state }),
+				onNone: () => ({ change, config, keep: opts.keep, mode: prepared, staged, state }),
 				onSome: (sha) => ({
 					change: { ...change, repo: { ...repo, baseSha: Option.none(), sha } },
 					config,
 					keep: false,
-					mode: prepare.success(carried),
+					mode: prepared,
 					staged,
 					state,
 				}),
 			}
 		)
+	}
 	if (Option.isNone(baseSha)) {
 		return single(yield* runSide(opts, side(Option.none(), [])))
 	}

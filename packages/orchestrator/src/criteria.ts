@@ -1,7 +1,7 @@
 // What every mode hands back once its criteria are checked (the agent, a session
 // or a Playwright spec), and the verdict built from it. The overall verdict is
 // code, not the model: any failure fails the run, anything unchecked blocks it.
-import type { ConsoleMessage, NetworkEvent } from "@witness/computer"
+import type { ConsoleMessage, NetworkEvent, Screenshot } from "@witness/computer"
 import {
 	aggregateOverall,
 	ConsoleError,
@@ -28,6 +28,8 @@ export type CriterionRecord = {
 	readonly notes: string
 	/** Full-resolution final screenshot, relative to the run dir. */
 	readonly screenshot: string | undefined
+	/** The final screen downscaled, as the reviewer sees it (the recorder's criteria only). */
+	readonly evidence: Screenshot | undefined
 	/** Set when the orchestrator, not the tester, ended the criterion. */
 	readonly forced: string | undefined
 	readonly console: readonly ConsoleMessage[]
@@ -42,6 +44,7 @@ export const pendingRecord = (criterion: Criterion): CriterionRecord => ({
 	console: [],
 	criterion,
 	endedAt: undefined,
+	evidence: undefined,
 	forced: undefined,
 	network: [],
 	notes: "",

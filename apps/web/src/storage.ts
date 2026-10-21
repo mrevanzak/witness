@@ -1,7 +1,8 @@
-// R2 (manifest + media) and D1 (report rows) behind Effect services.
+// Reports in R2 behind an Effect service. A report being uploaded keeps its
+// manifest at pending/<id>.json; finalizing moves it to reports/<id>/manifest.json,
+// and only then does the page show it.
 import { MANIFEST_FILE, type ReportId, ReportManifest, ReportStorageError } from "@witness/domain"
 import { Context, Effect, Layer, Option, Schema } from "effect"
-import { SqlClient } from "effect/sql"
 
 export class Bindings extends Context.Service<
 	Bindings,
@@ -49,11 +50,18 @@ export const parseRange = (
 	return Option.some({ length: end - start + 1, offset: start })
 }
 
+export type ReportStatus = "uploading" | "ready"
+
 export class ReportStore extends Context.Service<
 	ReportStore,
 	{
+		/** Starts an upload: the report exists, `uploading`, until `finalize`. */
+		create: (id: ReportId, manifest: ReportManifest) => Effect.Effect<void, ReportStorageError>
+		finalize: (id: ReportId) => Effect.Effect<void, ReportStorageError>
+		/** None when there is no such report. */
+		status: (id: ReportId) => Effect.Effect<Option.Option<ReportStatus>, ReportStorageError>
 		putFile: (id: ReportId, name: string, data: Uint8Array) => Effect.Effect<number, ReportStorageError>
-		putManifest: (id: ReportId, manifest: ReportManifest) => Effect.Effect<void, ReportStorageError>
+		/** The manifest of a finalized report. */
 		manifest: (id: ReportId) => Effect.Effect<Option.Option<ReportManifest>, ReportStorageError>
 		file: (
 			id: ReportId,
@@ -67,10 +75,28 @@ export class ReportStore extends Context.Service<
 		Effect.gen(function* () {
 			const { media } = yield* Bindings
 			const key = (id: ReportId, name: string) => `reports/${id}/${name}`
+			const pendingKey = (id: ReportId) => `pending/${id}.json`
+			const asJson = { httpMetadata: { contentType: "application/json" } }
+			const getText = (k: string, what: string) =>
+				Effect.tryPromise({
+					catch: fail(`get ${what}`),
+					try: async () => Option.fromUndefinedOr(await (await media.get(k))?.text()),
+				})
 			const encodeManifest = Schema.encodeEffect(Schema.fromJsonString(ReportManifest))
 			const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(ReportManifest))
 
 			return ReportStore.of({
+				create: (id, manifest) =>
+					encodeManifest(manifest).pipe(
+						Effect.mapError(fail("encode manifest")),
+						Effect.flatMap((json) =>
+							Effect.tryPromise({
+								catch: fail("put pending manifest"),
+								try: () => media.put(pendingKey(id), json, asJson),
+							})
+						),
+						Effect.asVoid
+					),
 				file: (id, name, rangeHeader) =>
 					Effect.gen(function* () {
 						const head = yield* Effect.tryPromise({ catch: fail("head"), try: () => media.head(key(id, name)) })
@@ -94,15 +120,31 @@ export class ReportStore extends Context.Service<
 							size: head.size,
 						})
 					}),
+				finalize: (id) =>
+					getText(pendingKey(id), "pending manifest").pipe(
+						Effect.flatMap(
+							Option.match({
+								// Already finalized.
+								onNone: () => Effect.void,
+								onSome: (json) =>
+									Effect.tryPromise({
+										catch: fail("finalize"),
+										try: async () => {
+											await media.put(key(id, MANIFEST_FILE), json, asJson)
+											await media.delete(pendingKey(id))
+										},
+									}),
+							})
+						)
+					),
 				manifest: (id) =>
-					Effect.tryPromise({ catch: fail("get manifest"), try: () => media.get(key(id, MANIFEST_FILE)) }).pipe(
-						Effect.flatMap((obj) =>
-							obj
-								? Effect.tryPromise({ catch: fail("read manifest"), try: () => obj.text() }).pipe(
-										Effect.flatMap((t) => decodeManifest(t).pipe(Effect.mapError(fail("decode manifest")))),
-										Effect.map(Option.some)
-									)
-								: Effect.succeed(Option.none())
+					getText(key(id, MANIFEST_FILE), "manifest").pipe(
+						Effect.flatMap(
+							Option.match({
+								onNone: () => Effect.succeed(Option.none()),
+								onSome: (t) =>
+									decodeManifest(t).pipe(Effect.mapError(fail("decode manifest")), Effect.map(Option.some)),
+							})
 						)
 					),
 				putFile: (id, name, data) =>
@@ -116,52 +158,16 @@ export class ReportStore extends Context.Service<
 								},
 							}),
 					}).pipe(Effect.as(data.length)),
-				putManifest: (id, manifest) =>
-					encodeManifest(manifest).pipe(
-						Effect.mapError(fail("encode manifest")),
-						Effect.flatMap((json) =>
-							Effect.tryPromise({
-								catch: fail("put manifest"),
-								try: () =>
-									media.put(key(id, MANIFEST_FILE), json, { httpMetadata: { contentType: "application/json" } }),
-							})
-						),
-						Effect.asVoid
-					),
-			})
-		})
-	)
-}
-
-const ReportStatus = Schema.Literals(["uploading", "ready"])
-type ReportStatus = typeof ReportStatus.Type
-
-export class ReportsRepo extends Context.Service<
-	ReportsRepo,
-	{
-		insert: (id: ReportId, manifest: ReportManifest) => Effect.Effect<void, ReportStorageError>
-		setReady: (id: ReportId) => Effect.Effect<void, ReportStorageError>
-		/** None when there is no such report. */
-		status: (id: ReportId) => Effect.Effect<Option.Option<ReportStatus>, ReportStorageError>
-	}
->()("witness/web/ReportsRepo") {
-	static readonly layer = Layer.effect(
-		ReportsRepo,
-		Effect.gen(function* () {
-			const sql = yield* SqlClient.SqlClient
-			const db = <A, E>(what: string, e: Effect.Effect<A, E>) => e.pipe(Effect.mapError(fail(what)))
-			const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ status: ReportStatus })))
-			return ReportsRepo.of({
-				insert: (id, m) =>
-					db(
-						"insert",
-						sql`INSERT INTO reports (id, title, repo, pr, overall, status, created_at) VALUES (${id}, ${m.title}, ${m.repo ?? null}, ${m.pr ?? null}, ${m.overall}, 'uploading', ${m.createdAt})`
-					).pipe(Effect.asVoid),
-				setReady: (id) => db("update", sql`UPDATE reports SET status = 'ready' WHERE id = ${id}`).pipe(Effect.asVoid),
 				status: (id) =>
-					db("select", sql`SELECT status FROM reports WHERE id = ${id}`.pipe(Effect.flatMap(decodeRows))).pipe(
-						Effect.map((rows) => Option.map(Option.fromUndefinedOr(rows[0]), (r) => r.status))
-					),
+					Effect.tryPromise({
+						catch: fail("status"),
+						try: async (): Promise<Option.Option<ReportStatus>> => {
+							if (await media.head(key(id, MANIFEST_FILE))) {
+								return Option.some("ready")
+							}
+							return (await media.head(pendingKey(id))) ? Option.some("uploading") : Option.none()
+						},
+					}),
 			})
 		})
 	)

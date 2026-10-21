@@ -14,7 +14,7 @@ import {
 	type VerifyOutcome,
 	verify,
 } from "@witness/orchestrator"
-import { type Layout, renderRun } from "@witness/renderer"
+import { renderRun } from "@witness/renderer"
 import { Config, Console, Effect, Layer, Option, Path, Schema } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 import { FetchHttpClient } from "effect/http"
@@ -303,17 +303,13 @@ const render = Command.make(
 	},
 	Effect.fn(function* (f) {
 		const pair = yield* loadRunPair(f.runDir)
-		// The witness.yaml the run used says how it renders, unless a flag does.
-		const defaults = pair.after.info.render
-		const layout = Option.getOrElse(f.layout, (): Layout => defaults?.evidence ?? "pr")
-		const animate = Option.getOrElse(f.animation, () => defaults?.animation ?? true)
 		const sides = pairSides(pair)
 		for (const { label, run: side } of sides) {
 			const header = headerOf(label, sides.length, f.label)
 			const r = yield* renderRun(side.dir, {
-				animate,
-				layout,
-				...Option.match(header, { onNone: () => ({}), onSome: (l) => ({ label: l }) }),
+				animate: Option.getOrUndefined(f.animation),
+				label: Option.getOrUndefined(header),
+				layout: Option.getOrUndefined(f.layout),
 			})
 			yield* Console.log(
 				[

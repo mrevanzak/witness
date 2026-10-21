@@ -94,13 +94,13 @@ const propsForRun = Effect.fnUntraced(function* (
 	runDir: string,
 	sourceDuration: number,
 	settings: RenderSettings,
-	label: string | undefined
+	label: string | undefined,
+	info: Option.Option<RunInfo>
 ) {
 	const steps = yield* readSteps(runDir).pipe(Effect.mapError(failed(RUN_FILES.steps)))
 	const verdict = yield* requireRunFile(runDir, RUN_FILES.verdict, Verdict).pipe(
 		Effect.mapError(failed(RUN_FILES.verdict))
 	)
-	const info = yield* readRunFile(runDir, RUN_FILES.info, RunInfo).pipe(Effect.mapError(failed(RUN_FILES.info)))
 	const task = Option.match(info, { onNone: () => "Verification", onSome: (i) => i.task })
 	const timeline = buildTimeline({
 		criteria: verdict.criteria.map((c) => ({ ...c, screenshot: Option.getOrNull(c.screenshot) })),
@@ -117,7 +117,7 @@ const propsForRun = Effect.fnUntraced(function* (
 		layout: settings.layout,
 		timeline,
 		title: reportTitle(task).slice(0, 110),
-		video: "computer/raw.mp4",
+		video: RUN_FILES.raw,
 	}
 	return {
 		props,
@@ -150,19 +150,29 @@ const remotionRender = (runDir: string, props: PolishedProps, out: string) =>
 
 export const renderRun = Effect.fn("renderRun")(function* (
 	runDirIn: string,
-	opts: { readonly animate?: boolean; readonly label?: string; readonly layout?: Layout } = {}
+	/** Unset settings come from the witness.yaml the run used (run.json), else animated and `pr`. */
+	opts: {
+		readonly animate?: boolean | undefined
+		readonly label?: string | undefined
+		readonly layout?: Layout | undefined
+	} = {}
 ) {
 	const fs = yield* FileSystem.FileSystem
 	const path = yield* Path.Path
 	const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
 	const runDir = path.resolve(runDirIn)
-	const raw = path.join(runDir, "computer", "raw.mp4")
+	const raw = path.join(runDir, RUN_FILES.raw)
 	if (!(yield* fs.exists(raw))) {
 		return yield* new RenderError({ message: `no recording at ${raw}` })
 	}
-	const settings: RenderSettings = { animate: opts.animate ?? true, layout: opts.layout ?? "pr" }
+	const info = yield* readRunFile(runDir, RUN_FILES.info, RunInfo).pipe(Effect.mapError(failed(RUN_FILES.info)))
+	const defaults = Option.getOrUndefined(info)?.render
+	const settings: RenderSettings = {
+		animate: opts.animate ?? defaults?.animation ?? true,
+		layout: opts.layout ?? defaults?.evidence ?? "pr",
+	}
 	const spec = LAYOUTS[settings.layout]
-	const { props, seek } = yield* propsForRun(runDir, yield* probeDuration(raw), settings, opts.label)
+	const { props, seek } = yield* propsForRun(runDir, yield* probeDuration(raw), settings, opts.label, info)
 	const { timeline } = props
 
 	const outDir = path.join(runDir, "render")
