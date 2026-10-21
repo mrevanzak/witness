@@ -1,15 +1,57 @@
 # Witness
 
-Witness checks a code change the way a QA tester would, then hands you the evidence. Point it at a branch or a pull request. It boots the app in a fresh Linux desktop, works out what the change should do, uses the app with a mouse and keyboard, and records everything. You get a verdict per criterion, stills, a short edited video, and a report you can drop into the PR or share as a link.
+Independent, recorded QA for code changes, driven by your coding agent.
+
+<p>
+  <a href="https://www.npmjs.com/package/@mrevanzak/witness"><img alt="npm version" src="https://img.shields.io/npm/v/@mrevanzak/witness.svg?style=for-the-badge&amp;labelColor=000000" height="28"></a>
+  <a href="https://skills.sh/mrevanzak/witness"><img alt="skills.sh" src="https://skills.sh/b/mrevanzak/witness?style=for-the-badge" height="28"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-000000.svg?style=for-the-badge" height="28"></a>
+</p>
+
+Witness checks a code change the way a QA tester would, then hands you the evidence. Run `/witness` on a branch or a pull request. It boots the app in a fresh Linux desktop, works out what the change should do, uses the app with a mouse and keyboard, and records everything. You get a verdict per criterion, stills, a short edited video, and a report you can drop into the PR or share as a link.
 
 It never edits code and it doesn't take the coding agent's word for anything. It only reports what it saw.
 
-## Why I built this
+## Install
 
-Cursor's cloud agents were the inspiration. They test their own work and attach a video, and lately I was using them mostly for that part: QA. Witness is that part on its own, with two differences I care about.
+You need Docker (OrbStack works well on macOS), Node 22.18 or newer, and ffmpeg.
 
-- It is independent. The thing being checked is never the thing doing the checking.
-- It works on any branch or PR, whether Claude Code, Cursor, Codex, Devin or a person wrote it.
+```bash
+npx skills add mrevanzak/witness
+```
+
+That's all you need to do. The first time the skill runs, it installs the CLI (`npm install -g @mrevanzak/witness`) and builds the computer image (`witness image`: Xvfb, Chromium, ffmpeg and the control server) if they're missing. You can also do both yourself up front.
+
+The skill works with Claude Code, Codex, Cursor, Gemini CLI, OpenCode and the other agents [skills](https://skills.sh) supports. If you can't run `npx skills`, copy [`skills/witness`](skills/witness) into your agent's skills folder (`~/.claude/skills/witness` for Claude Code).
+
+## Run it with `/witness`
+
+Witness never starts on its own. A run boots containers and records for minutes, so you start it yourself. On a feature branch, that's all it takes:
+
+```
+/witness
+```
+
+It checks the current branch against the default branch. If the branch has an open PR, the PR's description says what the change should do. Otherwise the branch's commit messages do. Only committed code is checked.
+
+To point it somewhere else or ask for more, add words after it:
+
+```
+/witness PR 123
+/witness against release/2.0, and attach the evidence to the PR
+```
+
+In agents without slash commands, name the skill: "use the witness skill". The agent then:
+
+1. pins the PR's head commit and its base,
+2. finds or drafts a `witness.yaml` for the app and checks that it boots (the first time only; it asks you where evidence should be published),
+3. boots the base commit in a recorded computer, plans two to six criteria from the diff (at least one checks for regressions), and tests each one with the mouse and keyboard while you watch in the live view,
+4. does the same on the change,
+5. renders the video and writes the report.
+
+It gives you the verdict and the report. It only touches the PR when you ask it to publish. No API key is needed: your agent does the testing, and Witness records every action it takes.
+
+Runs are recorded under `.witness/runs/` at the root of the repo under test. `.witness/` has its own `.gitignore`, so runs stay out of `git status`.
 
 ## What a run gives you
 
@@ -21,61 +63,24 @@ Cursor's cloud agents were the inspiration. They test their own work and attach 
 | a hosted report | an unlisted page with the video, criteria you can click to jump to, stills and logs |
 | a live view | while it runs, a local page that streams the desktop next to the checklist |
 
-## Quick start
+## Why I built this
 
-You need Docker (OrbStack works well on macOS), Node 22.18 or newer, pnpm 10, and ffmpeg.
+Cursor's cloud agents were the inspiration. They test their own work and attach a video, and lately I was using them mostly for that part: QA. Witness is that part on its own, with two differences I care about.
 
-```bash
-git clone https://github.com/mrevanzak/witness && cd witness
-pnpm install
-pnpm image:build          # the computer image: Xvfb, Chromium, ffmpeg, control server
-pnpm witness:smoke        # boots a computer, clicks a button, records, tears down
-```
-
-Try it on the demo app. `make-fixture.sh` creates a small repo with a correct and a broken implementation of the same change.
-
-```bash
-bash examples/todo-app/make-fixture.sh
-pnpm witness run --repo runs/fixtures/todo-app --ref feat/empty-title-broken --base main \
-  --task "Empty todo titles show 'Title is required' and are not added" \
-  --walkthrough examples/todo-app/walkthrough.spec.ts
-pnpm witness render .witness/runs/<run-id>
-pnpm witness report .witness/runs/<run-id>
-```
-
-Runs are recorded under `.witness/runs/` at the root of the git repo you run `witness` from (`--runs-dir` overrides it). `.witness/` carries its own `.gitignore`, so runs stay out of `git status` without touching yours.
-
-Each run opens a live view in your browser: the desktop as it happens, next to the checklist and the step log. Pass `--no-live` to skip it; CI never opens one. The run exits with 0 for pass, 1 for fail, 2 for blocked, 3 for usage errors and 4 when something else stopped the command (Docker down, a failed upload), so it slots into scripts and CI.
+- It is independent. The thing being checked is never the thing doing the checking.
+- It works on any branch or PR, whether Claude Code, Cursor, Codex, Devin or a person wrote it.
 
 ## Before and after
 
-By default every run checks the app twice: first at the base commit, then with the change, in two fresh computers and against the same criteria. Reviewers see what the app did before the change next to what it does now, and a fix shows the bug it fixes. The base commit's run lives in `<run>/before/`; `render`, `report` and `upload` pick it up on their own, so the report pairs each still with its before, shows both verdicts per criterion and includes both videos. Only the change's verdict sets the exit code. If the base commit can't boot, the report says so and shows the change alone.
+By default every run checks the app twice: first at the base commit, then with the change, in two fresh computers and against the same criteria. Reviewers see what the app did before the change next to what it does now, and a fix shows the bug it fixes. The report pairs each still with its before, shows both verdicts per criterion and includes both videos. Only the change's verdict decides the result. If the base commit can't boot, the report says so and shows the change alone.
 
-Set `states: after` in `witness.yaml` to record only the change (one boot instead of two), or pick per run with `witness run --states before-after|after`. A run with no base to compare with (no `--base` and no default branch) records the change alone.
-
-The two sides run one after the other. Walkthrough and independent runs can take `--parallel` to check both commits at once, in two computers: roughly half the wall time, twice the memory and CPU at the same moment (`--memory-gb` and `--cpus` apply to each), and the live view shows only the change. Sessions always go in order, since the change's session checks the criteria declared on the base commit.
+To record only the change (one boot instead of two), tell the agent, or set `states: after` in `witness.yaml`.
 
 ## Three ways to drive a run
 
-**Session mode** (`--session`) lets the coding agent you already use do the testing. `witness run --session` boots the app, starts recording and returns once the app is up. The agent then sends one action at a time with `witness act`, reads the screenshot each one returns, and records its verdicts. Every action goes through the same recorded tools as the other modes, so the video, captions, stills and verdict come out the same. No API key is needed; this is what the Claude Code skill uses.
+**Session mode** is what the skill uses, and your agent is the tester. Witness boots the app and starts recording. The agent sends one action at a time (click, type, scroll), reads the screenshot each action returns, saves captioned stills and records a verdict per criterion. Every action goes through the same recorded tools as the other modes, so the video, captions, stills and verdict come out the same.
 
-```bash
-pnpm witness run --repo runs/fixtures/todo-app --ref feat/empty-title-broken --base main \
-  --task "Empty todo titles show 'Title is required' and are not added" --session
-pnpm witness act criterion C1 feature "An empty title shows 'Title is required' and adds nothing"
-pnpm witness act begin C1
-pnpm witness act snapshot                                  # elements with refs and coordinates
-pnpm witness act click-ref e1 --label "Submit with an empty title"   # prints a screenshot path
-pnpm witness act still empty-title "The error shows, but a blank todo was added."
-pnpm witness act end C1 fail "Saw the error, but the counter went from 2 to 3."
-pnpm witness act finish                                    # prints the verdict, exits 0/1/2
-```
-
-With before and after on, the first session is the base commit. `act finish` records it, boots the change with the same criteria declared, and returns once the second session is ready; check each criterion again there (reuse still names so they pair up) and `act finish` once more. A session with no command for 15 minutes closes itself and leaves its open criteria blocked.
-
-**Independent mode** is the default and needs `ANTHROPIC_API_KEY`. Witness asks Claude to plan two to six criteria from the task and the diff, including at least one regression check. A separate tester loop then works through them using screenshots, and a reviewer call checks each claimed result against the final screenshot, the console and the app log. The overall verdict is computed by code: any failure fails the run, anything unchecked blocks it.
-
-**Walkthrough mode** (`--walkthrough file.spec.ts`) runs a plain Playwright spec in the recorded desktop, for paths someone already knows. Each `test()` is a criterion and its Playwright result is the verdict; `test.step()` titles become the video's captions and attached screenshots become stills.
+**Walkthrough mode** runs a plain Playwright spec in the recorded desktop, for paths someone already knows. Ask the agent to replay a path as a walkthrough, or point it at one of the app's own e2e specs. Each `test()` is a criterion and its Playwright result is the verdict. `test.step()` titles become the video's captions and attached screenshots become stills.
 
 ```ts
 import { expect, test } from "@playwright/test"
@@ -93,24 +98,13 @@ test("Submitting an empty title shows 'Title is required' and adds nothing", asy
 })
 ```
 
-The spec can be one of the app's own e2e specs. It then runs from the source at the exact commit, with the app's own `playwright.config` and `@playwright/test`. Or it can be a file outside the repo, written for Witness. Witness keeps the config's projects and setup, runs one Chromium project headed on the recorded display, and ignores `webServer`, since the app is already running.
+An app's own spec runs from the source at the exact commit, with the app's own `playwright.config` and `@playwright/test`. A spec written for Witness can live outside the repo. Witness keeps the config's projects and setup, runs one Chromium project headed on the recorded display, and ignores `webServer`, since the app is already running.
 
-A walkthrough runs the same spec on the base commit and on the change, so its before and after line up step for step. To compare two runs you made separately (two branches, say), use `witness compare <before-run> <after-run> --out report/`.
-
-## Using it from Claude Code
-
-`skills/witness` is a Claude Code skill. Link it into `~/.claude/skills/witness` and ask Claude to "verify PR 123" or run `/witness`. Claude boots the app in a session, plans the criteria from the diff, tests them itself while you watch in the live view, renders the video and returns the report. It checks the base commit first, then the change, so the report shows both. It only touches the PR when you ask it to publish.
+**Independent mode** uses Witness's own model and needs `ANTHROPIC_API_KEY`. Claude plans the criteria from the task and the diff, a separate tester loop works through them using screenshots, and a reviewer call checks each claimed result against the final screenshot, the console and the app log. The overall verdict is computed by code: any failure fails the run, and anything unchecked blocks it. The skill only uses this mode when you ask for it.
 
 ## Telling Witness how to boot your app
 
-The first time you point Witness at an app, draft its config:
-
-```bash
-pnpm witness init --repo ../my-app
-pnpm witness run --repo ../my-app --config ../my-app/witness.yaml --boot-only
-```
-
-`init` reads the lockfile, package scripts, Playwright's `webServer`, docker compose and `.env.example`, writes `witness.yaml`, and lists what it guessed. It also asks where evidence gets published (`evidence`, see [Publishing evidence](#publishing-evidence)); pass `--evidence pr|hosted` when you're not at a terminal. `--boot-only` proves the app boots before you spend a real run on it. Commit the file to the repo, or keep it outside and pass `--config`. A full config looks like this:
+The first time the agent sees an app, it drafts a `witness.yaml` from the lockfile, package scripts, Playwright's `webServer`, docker compose and `.env.example`. It fills the gaps from the repo's QA docs and CI workflows, then retries the boot until the app comes up. It keeps the file in `~/.witness/<repo-name>/`. Commit it to the repo when you want everyone to share it. A full config looks like this:
 
 ```yaml
 setup:
@@ -127,43 +121,47 @@ login:                                     # optional test account
   email: qa@example.com
   password: qa-password                    # never shown to the model, never logged
 timeouts: { setup: 900, boot: 180 }
-evidence: hosted                           # or pr: where `publish` puts screenshots and video
+evidence: hosted                           # or pr: where screenshots and video get published
 states: before-after                       # or after: also check the base commit (the default), or only the change
 animation: false                           # default true: zoom on each action, glide the cursor, ripple clicks
 ```
 
-A config passed with `--config` can also stage files from your machine into the app (`files`) and load secret env from a file (`secret_env`). Witness redacts those values from every log, step, transcript and report. A `witness.yaml` inside the repo under test cannot do either.
+A config kept outside the repo can also copy files from your machine into the app (`files`) and load secret env from a file (`secret_env`). Witness redacts those values from every log, step, transcript and report. A `witness.yaml` inside the repo under test can do neither.
 
-## Commands
+## The CLI
+
+The skill drives the `witness` CLI, and you can run it yourself too, from scripts and CI. `witness --help` lists every command.
 
 | Command | What it does |
 |---|---|
-| `witness init` | draft a `witness.yaml` for an app Witness hasn't run before, and choose where evidence is published |
-| `witness run` | verify a ref: boot, check, record, write the verdict, after checking the base commit the same way (`--session`, `--walkthrough`, `--states`, `--parallel`, `--boot-only`, `--keep`, `--no-live`) |
-| `witness act <action>` | send one recorded action to a `--session` run (`click-ref`, `type`, `begin`, `end`, `still`, `finish`, …) |
-| `witness render <run>` | render `polished.mp4` and `preview.gif` (for the run and its `before/`). With `evidence: hosted` (or `--layout hosted`) the app fills the frame and captions go to `captions.vtt`, since the report page shows the criteria. `animation: false` (or `--no-animation`) keeps the camera still: no zoom, cursor or click ripples |
+| `witness init` | draft a `witness.yaml` for an app, and choose where evidence is published |
+| `witness run` | verify a ref: boot, check, record, write the verdict (`--session`, `--walkthrough`, `--states`, `--parallel`, `--boot-only`, `--no-live`) |
+| `witness act <action>` | send one recorded action to a `--session` run |
+| `witness render <run>` | render `polished.mp4` and `preview.gif` |
 | `witness report <run>` | write `report.md`, a before/after report when the run has a `before/` |
-| `witness compare <before> <after> --out <dir>` | a before/after report folder |
-| `witness upload <run> [<after-run>]` | publish a hosted report (with the run's `before/`, or the two runs given), print its URL and write `hosted-section.md` for the PR |
+| `witness compare <before> <after> --out <dir>` | a before/after report from two separate runs |
+| `witness upload <run>` | publish a hosted report and print its URL |
 | `witness publish --pr <n> --report <file>` | put a report in your PR's description, or comment on someone else's PR |
 | `witness cleanup` | remove computers and networks left behind by crashed runs |
 
+`witness run` exits with 0 for pass, 1 for fail, 2 for blocked, 3 for usage errors and 4 when something else stopped it (Docker down, a failed upload).
+
 ## Publishing evidence
 
-Stills and the video reach a PR in one of two ways. `witness init` asks which one, and the answer is stored as `evidence` in `witness.yaml`.
+Stills and the video reach a PR in one of two ways. The agent asks which one the first time and saves the answer as `evidence` in `witness.yaml`.
 
-| `evidence` | Where it lands | Commands | Needs |
-|---|---|---|---|
-| `pr` | stills and the video uploaded into the PR | `witness publish --pr <n> --report report.md --ego-space <id>` | an Ego browser signed in to GitHub |
-| `hosted` | an unlisted report page; the PR gets the verdict, the criteria table and a link | `witness upload <run> --pr <n>`, then `witness publish --pr <n> --report <run>/hosted-section.md` | the Worker below, `WITNESS_REPORTS_URL`, `WITNESS_UPLOAD_TOKEN` |
+| `evidence` | Where it lands | Needs |
+|---|---|---|
+| `pr` | stills and the video uploaded into the PR | an Ego browser signed in to GitHub |
+| `hosted` | an unlisted report page; the PR gets the verdict, the criteria table and a link | the Worker below, `WITNESS_REPORTS_URL`, `WITNESS_UPLOAD_TOKEN` |
 
-`publish` writes into your own PR's description (between `<!-- witness:start/end -->`, replaced on re-runs) and comments on anyone else's. `--dry-run` shows what it would do.
+The report goes into your own PR's description (between `<!-- witness:start/end -->`, replaced on re-runs) and as a comment on anyone else's. The agent shows you a dry run and asks before it writes anything.
 
 ## Hosted reports on Cloudflare
 
 `apps/web` is a Cloudflare Worker. Media lives in R2, report rows in D1. Report links use 22-character random ids and are unlisted: anyone with the link can view, nothing is indexed.
 
-The infrastructure is code. [`apps/web/alchemy.run.ts`](apps/web/alchemy.run.ts) declares the bucket, the database (with its migrations) and the Worker with its bindings, and [Alchemy](https://alchemy.run) creates or updates them to match.
+The infrastructure is code. [`apps/web/alchemy.run.ts`](apps/web/alchemy.run.ts) declares the bucket, the database (with its migrations) and the Worker with its bindings, and [Alchemy](https://alchemy.run) creates or updates them to match. Deploying needs a clone of this repo with `pnpm install` run.
 
 ```bash
 cp apps/web/.env.example apps/web/.env     # set WITNESS_UPLOAD_TOKEN (openssl rand -hex 32)
@@ -171,16 +169,16 @@ pnpm --filter @witness/web exec alchemy profile edit --add Cloudflare  # once: s
 pnpm web:deploy                            # plan, confirm, create; prints the URL
 ```
 
-Then set `WITNESS_REPORTS_URL` (the printed URL) and `WITNESS_UPLOAD_TOKEN` where you run the CLI. `pnpm web:plan` shows what a deploy would change, `pnpm web:destroy` removes everything, and `WITNESS_DOMAIN` in `apps/web/.env` serves reports from your own domain. `pnpm web:dev` runs the whole stack locally (the Worker in workerd, R2 and D1 emulated) without a Cloudflare account. Alchemy keeps its state in your Cloudflare account, so CI can deploy too: set `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` and `WITNESS_UPLOAD_TOKEN`.
+Then set `WITNESS_REPORTS_URL` (the printed URL) and `WITNESS_UPLOAD_TOKEN` wherever your agent runs. `pnpm web:plan` shows what a deploy would change, `pnpm web:destroy` removes everything, and `WITNESS_DOMAIN` in `apps/web/.env` serves reports from your own domain. `pnpm web:dev` runs the whole stack locally (the Worker in workerd, R2 and D1 emulated) without a Cloudflare account. Alchemy keeps its state in your Cloudflare account, so CI can deploy too: set `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` and `WITNESS_UPLOAD_TOKEN`.
 
 ## How it works
 
-Each run gets its own computer: a Docker container with Xvfb, a window manager and Chromium, on its own network, as a non-root user with every capability dropped and fixed memory, CPU and process limits. A small control server inside takes screenshots, sends input through xdotool, records the screen with ffmpeg and reads the page over the Chrome DevTools Protocol. The app runs inside the same container from a `git archive` of the exact commit, never your working tree. When the run ends, the computer, its services and its network are removed.
+Each run gets its own computer: a Docker container with Xvfb, a window manager and Chromium, on its own network. It runs as a non-root user with every capability dropped and fixed memory, CPU and process limits. A small control server inside takes screenshots, sends input through xdotool, records the screen with ffmpeg and reads the page over the Chrome DevTools Protocol. The app runs inside the same container from a `git archive` of the exact commit, never your working tree. When the run ends, the computer, its services and its network are removed.
 
-The codebase is TypeScript on [Effect](https://effect.website) 4. The computer, the orchestrator, the CLI, the control server and the Worker are services and layers with typed errors and schema-checked data at every boundary. The video is a [Remotion](https://www.remotion.dev) composition over the raw recording.
+The codebase is TypeScript on [Effect](https://effect.website) 4. The computer, the orchestrator, the CLI, the control server and the Worker are services and layers with typed errors, and data is checked against a schema at every boundary. The video is a [Remotion](https://www.remotion.dev) composition over the raw recording.
 
 ```
-apps/cli              witness command
+apps/cli              the witness command (@mrevanzak/witness)
 apps/web              Cloudflare Worker for hosted reports
 packages/domain       schemas shared by everything: config, plan, steps, verdict, report API
 packages/computer     the computer: Docker provider, control client, in-image control server
@@ -188,8 +186,10 @@ packages/orchestrator boot, plan, test, review, walkthroughs, reports
 packages/renderer     timeline math and the Remotion composition
 infra/computer        the computer image
 examples/todo-app     demo app with a correct and a broken branch
-skills/witness        the Claude Code skill
+skills/witness        the agent skill
 ```
+
+To work on Witness itself, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Status
 
@@ -199,7 +199,7 @@ Only web apps for now. Mobile apps and non-Linux guests are out of scope.
 
 ## Licenses
 
-Witness is MIT licensed. One dependency needs a look before you adopt it: Remotion, which renders the polished video, is source-available under the [Remotion License](https://github.com/remotion-dev/remotion/blob/main/LICENSE.md). It is free for individuals and for companies of up to three people; larger companies need a Remotion company license to render videos. Everything else Witness does (the verdict, stills, reports, live view) works without rendering.
+Witness is MIT licensed. One dependency needs a look before you adopt it: Remotion, which renders the polished video, is source-available under the [Remotion License](https://github.com/remotion-dev/remotion/blob/main/LICENSE.md). It is free for individuals and for companies of up to three people. Larger companies need a Remotion company license to render videos. Everything else Witness does (the verdict, stills, reports, live view) works without rendering.
 
 ## Credits
 
