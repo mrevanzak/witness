@@ -69,7 +69,7 @@ Runs are recorded under `.witness/runs/` at the root of the repo under test. `.w
 
 I like Cursor's cloud agents, and the part I came to rely on most is how they verify their work. Each agent gets its own computer, so it can boot the app, click through it and record a video without getting in my way or in another agent's. Five agents can check five changes at once, and none of them shares a browser, a port or a database with the others.
 
-I wanted that for every change, not only the ones a cloud agent writes. Witness takes that piece and runs it on your machine:
+Then I stopped paying for Cursor, but I still wanted that verification. Witness takes that piece and runs it on your own machine, driven by whatever coding agent you already use:
 
 - **Each run has its own computer.** A fresh container with its own desktop, browser, network and services, removed when the run ends. Runs never share state, so you can start as many as your machine has memory for.
 - **It is independent.** The thing being checked is never the thing doing the checking. Witness doesn't edit code, and the coding agent's claims aren't evidence. The recording is.
