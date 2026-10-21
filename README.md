@@ -85,7 +85,7 @@ Some ways to use that:
 - Verify several candidate fixes for the same bug side by side, then compare the reports.
 - Script it in CI or a shell loop: `witness run --ref <sha>` per ref, each in the background.
 
-Two session runs in the same repo both write under `.witness/runs/`, so `witness act` needs `--run <runDir>` to say which session it means. The skill does this for you. Walkthrough and independent runs also take `--parallel`, which checks the base commit and the change at the same time instead of one after the other.
+Every `/witness` starts a new computer, even when another run is open; the skill never reuses one. Session runs in the same repo all write under `.witness/runs/`, so the skill passes `--run <runDir>` to every `witness act`, and `act` without it refuses to guess when several sessions are open. Walkthrough and independent runs also take `--parallel`, which checks the base commit and the change at the same time instead of one after the other.
 
 The limit is your machine. A computer takes 4 GB of memory and 2 CPUs by default (`--memory-gb`, `--cpus`), each service container up to 2 GB and 1 CPU, and a before/after run with `--parallel` needs two computers at once.
 

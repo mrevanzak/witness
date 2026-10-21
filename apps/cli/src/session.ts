@@ -236,7 +236,7 @@ export const sessionHost = Effect.fnUntraced(function* (runDir: string, idleMs: 
 	}
 })
 
-/** The open session's run dir: `run`, or the newest under `runsDir` with a driver.json. */
+/** The open session's run dir: `run`, or the only one under `runsDir` with a driver.json. */
 const findSession = Effect.fnUntraced(function* (run: Option.Option<string>, runsDir: string) {
 	const fs = yield* FileSystem.FileSystem
 	const path = yield* Path.Path
@@ -245,10 +245,17 @@ const findSession = Effect.fnUntraced(function* (run: Option.Option<string>, run
 	}
 	const root = path.resolve(runsDir)
 	const names = yield* fs.readDirectory(root).pipe(Effect.orElseSucceed(() => [] as string[]))
-	for (const name of [...names].sort().reverse()) {
-		if (yield* fs.exists(path.join(root, name, RUN_FILES.driver)).pipe(Effect.orElseSucceed(() => false))) {
-			return path.join(root, name)
-		}
+	const open = yield* Effect.filter(names, (name) =>
+		fs.exists(path.join(root, name, RUN_FILES.driver)).pipe(Effect.orElseSucceed(() => false))
+	)
+	if (open.length === 1) {
+		return path.join(root, open[0])
+	}
+	// Each trigger has its own computer; guessing between several would drive someone else's.
+	if (open.length > 1) {
+		return yield* new SessionError({
+			message: `${open.length} sessions are open under ${root} (${open.join(", ")}); pass --run <runDir> for yours`,
+		})
 	}
 	return yield* new SessionError({ message: `no open session under ${root}; start one with \`witness run --session\`` })
 })
