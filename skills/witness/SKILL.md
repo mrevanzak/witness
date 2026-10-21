@@ -1,13 +1,14 @@
 ---
 name: witness
 description: QA a pull request or branch in a fresh, recorded Linux desktop and produce a "## Manual verification" report (stills, polished walkthrough video, per-criterion verdict). Use when asked to verify, QA, or prove a PR or a coding agent's change, or to attach that evidence to a PR description.
+disable-model-invocation: true
 ---
 
 # witness
 
 You are QA for a change you did not write. Boot the app at the change's exact commit in an **witness** computer, use it like a person, and hand back evidence: stills with captions, `polished.mp4`, and a verdict per criterion. Tests and CI are never the evidence; the recorded run is.
 
-`$WITNESS` = the witness checkout (the directory two levels above this file). Run every `verify …` command as `pnpm -C $WITNESS -s witness …`.
+Run every command as `witness …`. If `command -v witness` finds nothing, install it first: `npm install -g @mrevanzak/witness` (needs Node 22.18+), then `witness image` once to build the computer image (needs Docker). A run that stops with "computer image … not found" needs `witness image` too.
 
 ## 1. Pin the change and the destination
 
@@ -16,14 +17,15 @@ gh pr view <N> --json number,title,author,headRefOid,baseRefName,body,files,url 
 git -C <repo> rev-parse HEAD                                                     # a branch
 ```
 
+- **No arguments** (a bare `/witness`): check the current branch of the repo you're in. Run `gh pr view --json …` with no number. If the branch has an open PR, treat it as that PR. Otherwise ref = `HEAD`, base = the default branch (`origin/HEAD`), and the task is the branch's commit messages (`git log --format=%B <base>..HEAD`). Don't ask for anything more. Runs use committed code only: if `git status --porcelain` shows uncommitted changes, tell the user they won't be checked, and carry on.
 - `ref` = the head **SHA**, fetched locally (`git -C <repo> fetch origin pull/<N>/head`). Base = `origin/<baseRefName>`.
 - **Destination: return the report to the user** unless they asked to attach or publish it to the PR. Publishing is step 6 and only runs on that request.
 
 ## 2. Pick the boot config
 
 - The repo has `witness.yaml` at the ref → use it.
-- Else `$WITNESS/local/<repo-name>/witness.yaml` (gitignored) → pass `--config`; run its `prepare.sh` first when present (it stages local dev keys, never hosted ones).
-- Else this is the app's first run. First ask the user where evidence should be published, as its own clear question with both options (see step 6): **GitHub PR** (stills and video uploaded into the PR) or **Hosted page** (an unlisted report page; the PR gets a summary linking to it). Then draft: `witness init --repo <repo> --out $WITNESS/local/<repo-name>/witness.yaml --evidence pr|hosted`. Without `--evidence`, `init` prompts on a terminal and fails anywhere else, so always pass it. It reads the lockfile, package scripts, Playwright `webServer`, docker compose and `.env.example`, and lists what it guessed. Finish it from the repo's own QA docs and CI workflows: services the app needs, env values, a seeded `login`, local secrets in a `secret_env` file next to it. Then prove it with `witness run … --config <it> --boot-only --no-live` until it boots, and keep it.
+- Else `~/.witness/<repo-name>/witness.yaml` (your private config, outside the repo) → pass `--config`; run its `prepare.sh` first when present (it stages local dev keys, never hosted ones).
+- Else this is the app's first run. First ask the user where evidence should be published, as its own clear question with both options (see step 6): **GitHub PR** (stills and video uploaded into the PR) or **Hosted page** (an unlisted report page; the PR gets a summary linking to it). Then draft: `witness init --repo <repo> --out ~/.witness/<repo-name>/witness.yaml --evidence pr|hosted`. Without `--evidence`, `init` prompts on a terminal and fails anywhere else, so always pass it. It reads the lockfile, package scripts, Playwright `webServer`, docker compose and `.env.example`, and lists what it guessed. Finish it from the repo's own QA docs and CI workflows: services the app needs, env values, a seeded `login`, local secrets in a `secret_env` file next to it. Then prove it with `witness run … --config <it> --boot-only --no-live` until it boots, and keep it.
 
 Heavy stacks (Next + CMS builds) need `--memory-gb 9 --cpus 6`.
 
@@ -39,7 +41,7 @@ Runs open a live view by default (the desktop, criteria and steps in the browser
 | **walkthrough** | replaying a path you already know step for step on both commits, or recording the app's own e2e specs | a Playwright spec drives the run (step 4b) |
 | **independent** | only when the user asks for Witness's own model and `ANTHROPIC_API_KEY` is set | `witness run … --task-file <task.md>`: its model plans, tests and judges |
 
-`task.md` = the PR title and body (or the user's description of the change). Pass `--repo` as an absolute path. Exit code: 0 pass, 1 fail, 2 blocked.
+`task.md` = the PR title and body, the user's description of the change, or (for a branch with no PR) its commit messages. Pass `--repo` as an absolute path. Exit code: 0 pass, 1 fail, 2 blocked.
 
 ## 4. Drive the session
 
@@ -88,7 +90,7 @@ With a `before/` run, `render` renders both videos (labelled before and after) a
 
 ## 6. Publish (only when asked)
 
-The config's `evidence` key says where evidence goes. If it is missing (an older config, or the repo's own `witness.yaml`), ask the user which of the two they want before publishing, and add the key to a config under `$WITNESS/local` so the next run doesn't ask again.
+The config's `evidence` key says where evidence goes. If it is missing (an older config, or the repo's own `witness.yaml`), ask the user which of the two they want before publishing, and add the key to a config under `~/.witness` so the next run doesn't ask again.
 
 | `evidence` | Where it lands | Needs |
 |---|---|---|

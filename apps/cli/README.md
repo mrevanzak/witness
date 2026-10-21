@@ -8,6 +8,8 @@ It never edits code and it doesn't take the coding agent's word for anything. It
 
 You need Docker (OrbStack works well on macOS), Node 22.18 or newer, and ffmpeg.
 
+Most people use Witness through its agent skill: install it with `npx skills add mrevanzak/witness`, then run `/witness` on a feature branch. The skill installs this CLI on first use. To install the CLI yourself, for scripts and CI:
+
 ```bash
 npm install -g @mrevanzak/witness
 witness image             # builds the computer image once: Xvfb, Chromium, ffmpeg, control server
