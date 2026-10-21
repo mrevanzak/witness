@@ -24,9 +24,24 @@ import { CONTROL_PORT, SHUTDOWN_GRACE_SECONDS } from "./protocol.ts"
 
 const LABEL = "witness.run"
 const ROLE = "witness.role"
+/** The pid of the witness process that owns a run, so cleanup leaves concurrent runs alone. */
+const OWNER = "witness.pid"
 const GB = 1024 ** 3
 const CONTROL = `${CONTROL_PORT}/tcp`
 const VNC = "6080/tcp"
+// shortcut: a pid only identifies a live owner on this host; a Docker daemon shared across hosts needs a host label too.
+const ownerAlive = (pid: string | undefined) => {
+	if (pid === undefined) {
+		return false
+	}
+	try {
+		process.kill(Number(pid), 0)
+		return true
+	} catch (e) {
+		return (e as NodeJS.ErrnoException).code === "EPERM"
+	}
+}
+
 /** `docker stop` grace: the computer's shutdown budget plus start.sh's own teardown. */
 const STOP_GRACE_SECONDS = SHUTDOWN_GRACE_SECONDS + 3
 
@@ -95,11 +110,14 @@ export const DockerComputerProvider = Layer.effect(
 				docker.listContainers({ all: true, filters: { label: [LABEL] } })
 			)
 			const networks = yield* call("listNetworks", () => docker.listNetworks({ filters: { label: [LABEL] } }))
-			const runs = new Set([
-				...containers.map((c) => c.Labels[LABEL] ?? ""),
-				...networks.map((n) => n.Labels?.[LABEL] ?? ""),
-			])
+			const labelled = [...containers.map((c) => c.Labels), ...networks.map((n) => n.Labels ?? {})]
+			const runs = new Set(labelled.map((l) => l[LABEL] ?? ""))
 			runs.delete("")
+			for (const l of labelled) {
+				if (ownerAlive(l[OWNER])) {
+					runs.delete(l[LABEL] ?? "")
+				}
+			}
 			yield* Effect.forEach(runs, removeRun, { discard: true })
 			return runs.size
 		}).pipe(Effect.withSpan("DockerComputerProvider.cleanupOrphans"))
@@ -131,7 +149,7 @@ export const DockerComputerProvider = Layer.effect(
 				Effect.mapError((e) => new DockerError({ message: e.message, operation: "artifactsDir" }))
 			)
 
-			const labels = { [LABEL]: spec.runId }
+			const labels = { [LABEL]: spec.runId, [OWNER]: String(process.pid) }
 			const network = `witness-${spec.runId}`
 			yield* call("createNetwork", () =>
 				docker.createNetwork({ CheckDuplicate: true, Driver: "bridge", Labels: labels, Name: network })
@@ -201,7 +219,7 @@ export const DockerComputerProvider = Layer.effect(
 					docker.createContainer({
 						Env: Object.entries(svc.env).map(([k, v]) => `${k}=${v}`),
 						Image: svc.image,
-						Labels: { [LABEL]: spec.runId, [ROLE]: `service:${name}` },
+						Labels: { ...labels, [ROLE]: `service:${name}` },
 						name: `witness-${spec.runId}-${name}`,
 						...(svc.command ? { Cmd: [...svc.command] } : {}),
 						HostConfig: {

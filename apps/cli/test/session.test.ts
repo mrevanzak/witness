@@ -77,4 +77,19 @@ describe("session", () => {
 			assert.strictEqual(code, 4)
 		}).pipe(Effect.scoped, Effect.provide(Env))
 	)
+
+	it.live("makes `act` name its run when several sessions are open", () =>
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem
+			const runsDir = mkdtempSync(join(tmpdir(), "witness-runs-"))
+			for (const id of ["a", "b"]) {
+				yield* fs.makeDirectory(join(runsDir, id))
+				yield* fs.writeFileString(join(runsDir, id, RUN_FILES.driver), "{}")
+			}
+			const error = yield* act({ action: "shot", args: [], label: Option.none(), run: Option.none(), runsDir }).pipe(
+				Effect.flip
+			)
+			assert.include(error.message, "2 sessions are open")
+		}).pipe(Effect.provide(Env))
+	)
 })

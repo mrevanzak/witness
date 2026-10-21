@@ -12,6 +12,8 @@ Witness checks a code change the way a QA tester would, then hands you the evide
 
 It never edits code and it doesn't take the coding agent's word for anything. It only reports what it saw.
 
+Every run gets its own computer, so you can verify several branches, pull requests or agents' work at the same time on one machine without one run touching another.
+
 ## Install
 
 You need Docker (OrbStack works well on macOS), Node 22.18 or newer, and ffmpeg.
@@ -65,10 +67,27 @@ Runs are recorded under `.witness/runs/` at the root of the repo under test. `.w
 
 ## Why I built this
 
-Cursor's cloud agents were the inspiration. They test their own work and attach a video, and lately I was using them mostly for that part: QA. Witness is that part on its own, with two differences I care about.
+I like Cursor's cloud agents, and the part I came to rely on most is how they verify their work. Each agent gets its own computer, so it can boot the app, click through it and record a video without getting in my way or in another agent's. Five agents can check five changes at once, and none of them shares a browser, a port or a database with the others.
 
-- It is independent. The thing being checked is never the thing doing the checking.
-- It works on any branch or PR, whether Claude Code, Cursor, Codex, Devin or a person wrote it.
+Then I stopped paying for Cursor, but I still wanted that verification. Witness takes that piece and runs it on your own machine, driven by whatever coding agent you already use:
+
+- **Each run has its own computer.** A fresh container with its own desktop, browser, network and services, removed when the run ends. Runs never share state, so you can start as many as your machine has memory for.
+- **It is independent.** The thing being checked is never the thing doing the checking. Witness doesn't edit code, and the coding agent's claims aren't evidence. The recording is.
+- **It works on any change.** Any branch or PR, whether Claude Code, Cursor, Codex, Devin or a person wrote it.
+
+## Running several at once
+
+Witness is built to run in parallel. Each run gets a unique id, its own container and Docker network (services like Postgres included), host ports the OS picks, its own live view and its own run directory. Starting a run only cleans up computers whose witness process has exited, so it never stops a run that is still going.
+
+Some ways to use that:
+
+- Open one agent per PR or per worktree and run `/witness` in each. They don't wait for each other.
+- Verify several candidate fixes for the same bug side by side, then compare the reports.
+- Script it in CI or a shell loop: `witness run --ref <sha>` per ref, each in the background.
+
+Every `/witness` starts a new computer, even when another run is open; the skill never reuses one. Session runs in the same repo all write under `.witness/runs/`, so the skill passes `--run <runDir>` to every `witness act`, and `act` without it refuses to guess when several sessions are open. Walkthrough and independent runs also take `--parallel`, which checks the base commit and the change at the same time instead of one after the other.
+
+The limit is your machine. A computer takes 4 GB of memory and 2 CPUs by default (`--memory-gb`, `--cpus`), each service container up to 2 GB and 1 CPU, and a before/after run with `--parallel` needs two computers at once.
 
 ## Before and after
 
@@ -142,7 +161,7 @@ The skill drives the `witness` CLI, and you can run it yourself too, from script
 | `witness compare <before> <after> --out <dir>` | a before/after report from two separate runs |
 | `witness upload <run>` | publish a hosted report and print its URL |
 | `witness publish --pr <n> --report <file>` | put a report in your PR's description, or comment on someone else's PR |
-| `witness cleanup` | remove computers and networks left behind by crashed runs |
+| `witness cleanup` | remove computers and networks left behind by crashed runs (running ones are kept) |
 
 `witness run` exits with 0 for pass, 1 for fail, 2 for blocked, 3 for usage errors and 4 when something else stopped it (Docker down, a failed upload).
 
@@ -173,7 +192,7 @@ Then set `WITNESS_REPORTS_URL` (the printed URL) and `WITNESS_UPLOAD_TOKEN` wher
 
 ## How it works
 
-Each run gets its own computer: a Docker container with Xvfb, a window manager and Chromium, on its own network. It runs as a non-root user with every capability dropped and fixed memory, CPU and process limits. A small control server inside takes screenshots, sends input through xdotool, records the screen with ffmpeg and reads the page over the Chrome DevTools Protocol. The app runs inside the same container from a `git archive` of the exact commit, never your working tree. When the run ends, the computer, its services and its network are removed.
+Each run gets its own computer: a Docker container with Xvfb, a window manager and Chromium, on its own network. It runs as a non-root user with every capability dropped and fixed memory, CPU and process limits. A small control server inside takes screenshots, sends input through xdotool, records the screen with ffmpeg and reads the page over the Chrome DevTools Protocol. The app runs inside the same container from a `git archive` of the exact commit, never your working tree. Nothing is shared between runs: each has its own network, ports and token. When the run ends, the computer, its services and its network are removed.
 
 The codebase is TypeScript on [Effect](https://effect.website) 4. The computer, the orchestrator, the CLI, the control server and the Worker are services and layers with typed errors, and data is checked against a schema at every boundary. The video is a [Remotion](https://www.remotion.dev) composition over the raw recording.
 

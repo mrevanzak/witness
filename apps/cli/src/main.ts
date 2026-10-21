@@ -369,7 +369,7 @@ const actCmd = Command.make(
 		args: Argument.String("args").pipe(Argument.variadic()),
 		label: Flag.String("label").pipe(Flag.withDescription("Caption for the video, at most 8 words"), Flag.optional),
 		run: Flag.String("run").pipe(
-			Flag.withDescription("The session's run dir (default: the newest open session)"),
+			Flag.withDescription("The session's run dir (default: the only open session)"),
 			Flag.optional
 		),
 		runsDir: runsDirFlag,

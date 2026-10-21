@@ -72,7 +72,7 @@ export class ComputerProvider extends Context.Service<
 		create: (
 			spec: ComputerSpec
 		) => Effect.Effect<Computer, DockerError | ComputerImageMissingError | ComputerStartTimeoutError, Scope.Scope>
-		/** Removes computers and networks left behind by crashed runs; returns how many runs it cleaned. */
+		/** Removes computers and networks whose witness process has exited; returns how many runs it cleaned. */
 		readonly cleanupOrphans: Effect.Effect<number, DockerError>
 	}
 >()("witness/computer/ComputerProvider") {}
