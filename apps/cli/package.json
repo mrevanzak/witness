@@ -1,6 +1,6 @@
 {
   "name": "@mrevanzak/witness",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Independent, recorded QA for code changes: boots the app in a fresh Linux desktop, checks the change, and hands back a verdict, stills and video",
   "keywords": [
     "qa",
