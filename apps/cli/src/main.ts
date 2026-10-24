@@ -19,6 +19,7 @@ import { Config, Console, Effect, Layer, Option, Path, Schema } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 import { FetchHttpClient } from "effect/http"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import pkg from "../package.json" with { type: "json" }
 import { buildImage } from "./image.ts"
 import { init } from "./init.ts"
 import { startLive } from "./live.ts"
@@ -489,7 +490,7 @@ const Services = Layer.mergeAll(Git.layer, DockerComputerProvider).pipe(
 const USAGE = new Set(["UsageError", "InitError", "SessionError"])
 
 witness.pipe(
-	Command.run({ version: "0.1.0" }),
+	Command.run({ version: pkg.version }),
 	Effect.catch((e) =>
 		Console.error("message" in e && typeof e.message === "string" ? e.message : String(e)).pipe(
 			Effect.andThen(setExit("_tag" in e && USAGE.has(e._tag) ? EXIT_USAGE : EXIT_ERROR))
