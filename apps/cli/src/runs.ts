@@ -1,7 +1,8 @@
 // Where runs live by default: `.witness/runs` at the git root of the current
 // directory, so evidence stays next to the project wherever the CLI is
 // installed, and `run` and `act` find the same sessions from any subfolder.
-// `.witness/` carries its own `.gitignore`, so runs never show up in `git status`.
+// `.witness/` carries its own `.gitignore` for `runs/`, so runs never show up in `git status`
+// while `witness.yaml` and its scripts can be committed beside them.
 import { Git } from "@witness/orchestrator"
 import { Effect, FileSystem, Option, Path } from "effect"
 import { Flag } from "effect/cli"
@@ -11,7 +12,7 @@ export const runsDirFlag = Flag.String("runs-dir").pipe(
 	Flag.optional
 )
 
-/** `.witness/` at the git root of `dir` (or `dir` itself outside a repo), created and ignoring itself. */
+/** `.witness/` at the git root of `dir` (or `dir` itself outside a repo), created and ignoring its runs. */
 export const witnessHome = Effect.fnUntraced(function* (dir: string) {
 	const fs = yield* FileSystem.FileSystem
 	const path = yield* Path.Path
@@ -22,7 +23,11 @@ export const witnessHome = Effect.fnUntraced(function* (dir: string) {
 		".witness"
 	)
 	yield* fs.makeDirectory(home, { recursive: true })
-	yield* fs.writeFileString(path.join(home, ".gitignore"), "# Witness runs (recordings, screenshots, verdicts)\n*\n")
+	// A repo may commit its own version; only write ours when there is none.
+	const ignore = path.join(home, ".gitignore")
+	if (!(yield* fs.exists(ignore))) {
+		yield* fs.writeFileString(ignore, "# Witness runs (recordings, screenshots, verdicts)\nruns/\n.gitignore\n")
+	}
 	return home
 })
 

@@ -130,12 +130,23 @@ const loadConfig = Effect.fnUntraced(function* (configPath: Option.Option<string
 	const invalid = (e: { readonly message: string }) =>
 		new ConfigUnusable({ message: e.message, reason: "invalid_witness_yaml" })
 	const text = yield* Option.match(configPath, {
-		onNone: () => Git.use((git) => git.showFile(repo, "witness.yaml")),
+		// `.witness/witness.yaml` keeps the config next to its scripts (and the runs); the root is the older spot.
+		onNone: () =>
+			Git.use((git) =>
+				git.showFile(repo, ".witness/witness.yaml").pipe(
+					Effect.flatMap(
+						Option.match({
+							onNone: () => git.showFile(repo, "witness.yaml"),
+							onSome: (t) => Effect.succeed(Option.some(t)),
+						})
+					)
+				)
+			),
 		onSome: (p) => fs.readFileString(p).pipe(Effect.map(Option.some)),
 	}).pipe(Effect.mapError(invalid))
 	if (Option.isNone(text)) {
 		return yield* new ConfigUnusable({
-			message: `no witness.yaml at ${repo.prefix || "the repo root"} in ${repo.sha.slice(0, 7)}; draft one with \`witness init\` and pass it with --config`,
+			message: `no .witness/witness.yaml (or witness.yaml) at ${repo.prefix || "the repo root"} in ${repo.sha.slice(0, 7)}; draft one with \`witness init\` and pass it with --config`,
 			reason: "no_witness_yaml",
 		})
 	}

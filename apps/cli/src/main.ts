@@ -437,7 +437,7 @@ const initCmd = Command.make(
 		),
 		force: Flag.Boolean("force").pipe(Flag.withDescription("Overwrite an existing file"), Flag.withDefault(false)),
 		out: Flag.String("out").pipe(
-			Flag.withDescription("Where to write it (default: <repo>/witness.yaml)"),
+			Flag.withDescription("Where to write it (default: <repo>/.witness/witness.yaml)"),
 			Flag.optional
 		),
 		repo: Flag.String("repo").pipe(

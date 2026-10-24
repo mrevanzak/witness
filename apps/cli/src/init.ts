@@ -373,7 +373,10 @@ export const init = Effect.fn("init")(function* (o: {
 	if (!(yield* fs.exists(repo))) {
 		return yield* new InitError({ message: `${repo} does not exist` })
 	}
-	const out = Option.match(o.out, { onNone: () => path.join(repo, "witness.yaml"), onSome: (p) => path.resolve(p) })
+	const out = Option.match(o.out, {
+		onNone: () => path.join(repo, ".witness", "witness.yaml"),
+		onSome: (p) => path.resolve(p),
+	})
 	if ((yield* fs.exists(out)) && !o.force) {
 		return yield* new InitError({ message: `${out} already exists (use --force to overwrite)` })
 	}

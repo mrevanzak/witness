@@ -53,7 +53,7 @@ In agents without slash commands, name the skill: "use the witness skill". The a
 
 It gives you the verdict and the report. It only touches the PR when you ask it to publish. No API key is needed: your agent does the testing, and Witness records every action it takes.
 
-Runs are recorded under `.witness/runs/` at the root of the repo under test. `.witness/` has its own `.gitignore`, so runs stay out of `git status`.
+Runs are recorded under `.witness/runs/` at the root of the repo under test. `.witness/` has its own `.gitignore` for `runs/`, so runs stay out of `git status` while a committed `.witness/witness.yaml` and its scripts sit beside them.
 
 ## What a run gives you
 
@@ -123,7 +123,7 @@ An app's own spec runs from the source at the exact commit, with the app's own `
 
 ## Telling Witness how to boot your app
 
-The first time the agent sees an app, it drafts a `witness.yaml` from the lockfile, package scripts, Playwright's `webServer`, docker compose and `.env.example`. It fills the gaps from the repo's QA docs and CI workflows, then retries the boot until the app comes up. It keeps the file in `~/.witness/<repo-name>/`. Commit it to the repo when you want everyone to share it. A full config looks like this:
+The first time the agent sees an app, it drafts a `witness.yaml` from the lockfile, package scripts, Playwright's `webServer`, docker compose and `.env.example`. It fills the gaps from the repo's QA docs and CI workflows, then retries the boot until the app comes up. It keeps the file in `~/.witness/<repo-name>/`. Move it to `.witness/witness.yaml` in the repo (scripts beside it) when you want everyone to share it; a root `witness.yaml` still works. A full config looks like this:
 
 ```yaml
 setup:
