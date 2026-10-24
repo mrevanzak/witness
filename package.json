@@ -11,7 +11,7 @@
     "fix": "ultracite fix",
     "image:build": "pnpm build:control && docker build -t witness-computer:dev infra/computer",
     "prepare": "husky",
-    "release": "pnpm check && pnpm typecheck && pnpm test && cd apps/cli && np --no-cleanup --no-tests --package-manager pnpm",
+    "release": "pnpm check && pnpm typecheck && pnpm test && cd apps/cli && np --no-cleanup --no-tests --no-publish --package-manager pnpm && pnpm publish --no-git-checks",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json && tsc -p packages/renderer/remotion/tsconfig.json && tsc -p apps/web/tsconfig.json --noEmit",
     "web:deploy": "pnpm --filter @witness/web run deploy",

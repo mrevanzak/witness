@@ -28,4 +28,4 @@ pnpm e2e:scripted         # the whole pipeline on the demo app, no API key neede
 
 ## Releasing
 
-`pnpm release` runs the checks, then [np](https://github.com/sindresorhus/np) asks for the next version, bumps `apps/cli/package.json`, commits and tags `vX.Y.Z`, publishes `@mrevanzak/witness` and pushes. Run it from a clean, up-to-date `main` while logged in to npm. The CLI's `--version` reads that same `package.json`.
+`pnpm release` runs the checks, then [np](https://github.com/sindresorhus/np) asks for the next version, bumps `apps/cli/package.json`, commits and tags `vX.Y.Z`, pushes and drafts the GitHub release. Then `pnpm publish` publishes `@mrevanzak/witness`; open the link npm prints to approve it in the browser (np can't wait for that, so it doesn't publish). Run it from a clean, up-to-date `main` while logged in to npm. The CLI's `--version` reads that same `package.json`.
