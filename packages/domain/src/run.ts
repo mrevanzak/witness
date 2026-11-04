@@ -50,7 +50,7 @@ export const StepTool = Schema.Literals([
 	"begin_criterion",
 	"end_criterion",
 	"still",
-	/** A Playwright `test.step()` title (a caption only). */
+	/** A caption only: a Playwright `test.step()` title, or a person taking over in the live view. */
 	"step",
 ])
 export type StepTool = typeof StepTool.Type

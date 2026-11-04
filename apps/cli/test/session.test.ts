@@ -7,6 +7,7 @@ import { BlockedVerdict, Criterion, RUN_FILES } from "@witness/domain"
 import { Recorder, type RecorderApi, type ToolCall } from "@witness/orchestrator"
 import { Effect, Fiber, FileSystem, Layer, Option, Schema } from "effect"
 import { FetchHttpClient } from "effect/http"
+import { sameLoopbackOrigin } from "../src/live.ts"
 import { act, sessionHost } from "../src/session.ts"
 
 /** A recorder that answers every call with its tag, and remembers the calls. */
@@ -92,4 +93,37 @@ describe("session", () => {
 			assert.include(error.message, "2 sessions are open")
 		}).pipe(Effect.provide(Env))
 	)
+
+	it.live("refuses `act` while a person holds the computer, and marks the hand-over", () =>
+		Effect.gen(function* () {
+			const runDir = mkdtempSync(join(tmpdir(), "witness-session-"))
+			const calls: ToolCall[] = []
+			const host = yield* sessionHost(runDir, 60_000)
+			yield* host
+				.program({ carried: [], sha: "abc1234", state: Option.none() })
+				.pipe(Effect.provideService(Recorder, stubRecorder(runDir, calls)), Effect.forkChild)
+			const shot = act({ action: "shot", args: [], label: Option.none(), run: Option.some(runDir), runsDir: runDir })
+			yield* Effect.sleep("50 millis")
+
+			yield* host.takeover(true)
+			yield* host.takeover(true) // a second tab pressing it again marks nothing new
+			assert.strictEqual(yield* shot, 4)
+			yield* host.takeover(false)
+			assert.strictEqual(yield* shot, 0)
+			assert.deepStrictEqual(
+				calls.map((c) => (c._tag === "Caption" ? c.label : c._tag)),
+				["A person took over the computer", "The person handed control back", "Note", "Screenshot"]
+			)
+		}).pipe(Effect.scoped, Effect.provide(Env))
+	)
+})
+
+describe("live view takeover", () => {
+	it("accepts only the live page's own loopback origin", () => {
+		assert.isTrue(sameLoopbackOrigin({ host: "127.0.0.1:5000", origin: "http://127.0.0.1:5000" }))
+		assert.isFalse(sameLoopbackOrigin({ host: "127.0.0.1:5000", origin: "https://evil.example" }))
+		assert.isFalse(sameLoopbackOrigin({ host: "127.0.0.1:5000" }))
+		// DNS rebinding: same origin, but not a loopback host.
+		assert.isFalse(sameLoopbackOrigin({ host: "evil.example:5000", origin: "http://evil.example:5000" }))
+	})
 })
