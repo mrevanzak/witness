@@ -24,6 +24,7 @@ import {
 	type RecorderApi,
 	SESSION_SHOT_WIDTH,
 	type SessionProgram,
+	ToolCall,
 } from "@witness/orchestrator"
 import {
 	Clock,
@@ -106,6 +107,8 @@ export const sessionHost = Effect.fnUntraced(function* (runDir: string, idleMs: 
 	const current = yield* Ref.make(Option.none<Side>())
 	const lock = yield* Semaphore.make(1)
 	const shotNo = yield* Ref.make(0)
+	/** When a person took over in the live view; `witness act` waits for them to hand back. */
+	const humanSince = yield* Ref.make(Option.none<number>())
 	const setStatus = (next: (seq: number) => SessionStatus) => SubscriptionRef.update(status, (s) => next(s.seq + 1))
 
 	/** Saves a screen the driver looks at, and returns its path. */
@@ -121,6 +124,11 @@ export const sessionHost = Effect.fnUntraced(function* (runDir: string, idleMs: 
 
 	const act = (req: typeof ActRequest.Type) =>
 		Effect.gen(function* () {
+			if (Option.isSome(yield* Ref.get(humanSince))) {
+				return yield* bad(
+					"a person has taken over the computer in the live view; wait until they hand it back, then `witness act shot` to see where they left it"
+				)
+			}
 			const side = yield* Ref.get(current)
 			if (Option.isNone(side)) {
 				return yield* bad("no side is ready yet (the app is booting); try again in a moment")
@@ -147,6 +155,33 @@ export const sessionHost = Effect.fnUntraced(function* (runDir: string, idleMs: 
 			Effect.catch((e) => Effect.succeed({ error: e.message, ok: false } satisfies ActResponse)),
 			Semaphore.withPermit(lock)
 		)
+
+	/**
+	 * The live view's Take over / Hand back. Waits for the action in flight, then marks
+	 * the hand-over in the step log and the report (recordings are evidence).
+	 */
+	const takeover = (human: boolean) =>
+		Effect.gen(function* () {
+			const at = yield* Clock.currentTimeMillis
+			const since = yield* Ref.getAndSet(humanSince, human ? Option.some(at) : Option.none())
+			const side = yield* Ref.get(current)
+			if (Option.isNone(side) || Option.isSome(since) === human) {
+				return
+			}
+			yield* Ref.set(side.value.lastAt, at)
+			const { recorder } = side.value
+			if (human) {
+				yield* recorder.perform(ToolCall.Caption({ label: "A person took over the computer" }))
+				return
+			}
+			yield* recorder.perform(ToolCall.Caption({ label: "The person handed control back" }))
+			const secs = Math.round((at - Option.getOrElse(since, () => at)) / 1000)
+			yield* recorder.perform(
+				ToolCall.Note({
+					line: `A person took over the computer from the live view for ${secs} s; the steps between "A person took over the computer" and "The person handed control back" are theirs.`,
+				})
+			)
+		}).pipe(Effect.ignore, Semaphore.withPermit(lock))
 
 	const token = randomBytes(24).toString("hex")
 	const authorized = HttpServerRequest.HttpServerRequest.pipe(
@@ -233,6 +268,7 @@ export const sessionHost = Effect.fnUntraced(function* (runDir: string, idleMs: 
 		/** Tells waiting drivers the run is over, and gives them a moment to hear it. */
 		finished: setStatus((seq) => ({ _tag: "Finished", seq })).pipe(Effect.andThen(Effect.sleep("1 second"))),
 		program,
+		takeover,
 	}
 })
 

@@ -1,12 +1,13 @@
-// `witness run --live`: a local page that streams the computer's desktop (noVNC,
-// view only) next to the criteria checklist and the step log as they happen.
+// `witness run --live`: a local page that streams the computer's desktop (noVNC)
+// next to the criteria checklist and the step log as they happen. It opens
+// watching; Take over makes the desktop take the viewer's mouse and keyboard.
 // Run events arrive over Server-Sent Events; late joiners get the history first.
 
 import { createServer } from "node:http"
 import { NodeHttpServer } from "@effect/platform-node"
 import type { LiveEvent } from "@witness/orchestrator"
-import { Effect, Layer, PubSub, Ref, Stream } from "effect"
-import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http"
+import { Effect, Layer, Option, PubSub, Ref, Schema, Stream } from "effect"
+import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { LIVE_PAGE } from "./live-page.ts"
 
 /** Serves `routes` on host loopback, on a port the OS picks, for the current scope. Returns its origin. */
@@ -20,8 +21,20 @@ export const serveLoopback = <E, R>(routes: Layer.Layer<never, E, R>) =>
 const encoder = new TextEncoder()
 const sse = (data: unknown) => encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
 
-/** Starts the live server for the current scope; returns its URL and the publisher to hand to the run. */
-export const startLive = Effect.fn("startLive")(function* () {
+const TakeoverRequest = Schema.Struct({ human: Schema.Boolean })
+const LOOPBACK_HOST = /^127\.0\.0\.1:\d+$/
+
+/** Only the live page itself may take over: same origin, on loopback (no CSRF, no DNS rebinding). */
+export const sameLoopbackOrigin = (headers: Readonly<Record<string, string | undefined>>) => {
+	const host = headers.host ?? ""
+	return LOOPBACK_HOST.test(host) && headers.origin === `http://${host}`
+}
+
+/**
+ * Starts the live server for the current scope; returns its URL and the publisher to hand to the run.
+ * `onTakeover` hears the page's Take over / Hand back (a session pauses `witness act` meanwhile).
+ */
+export const startLive = Effect.fn("startLive")(function* (onTakeover?: (human: boolean) => Effect.Effect<void>) {
 	const events = yield* PubSub.unbounded<LiveEvent>()
 	const history = yield* Ref.make<readonly LiveEvent[]>([])
 	const publish = (event: LiveEvent) =>
@@ -30,6 +43,32 @@ export const startLive = Effect.fn("startLive")(function* () {
 	const origin = yield* serveLoopback(
 		Layer.mergeAll(
 			HttpRouter.add("GET", "/", HttpServerResponse.html(LIVE_PAGE)),
+			HttpRouter.add(
+				"POST",
+				"/takeover",
+				Effect.gen(function* () {
+					const req = yield* HttpServerRequest.HttpServerRequest
+					if (!sameLoopbackOrigin(req.headers)) {
+						return yield* HttpServerResponse.json({ error: "forbidden" }, { status: 403 })
+					}
+					const body = yield* HttpServerRequest.schemaBodyJson(TakeoverRequest).pipe(Effect.option)
+					if (Option.isNone(body)) {
+						return yield* HttpServerResponse.json({ error: "bad request" }, { status: 400 })
+					}
+					const { human } = body.value
+					if (onTakeover) {
+						yield* onTakeover(human)
+					}
+					// Every open tab follows; `paused` says whether the driver waits for the person.
+					yield* publish({
+						at: new Date().toISOString(),
+						data: { human, paused: onTakeover !== undefined },
+						event: "takeover",
+						type: "log",
+					})
+					return yield* HttpServerResponse.json({ ok: true })
+				}).pipe(Effect.orDie)
+			),
 			HttpRouter.add(
 				"GET",
 				"/events",

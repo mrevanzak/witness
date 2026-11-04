@@ -63,7 +63,7 @@ Runs are recorded under `.witness/runs/` at the root of the repo under test. `.w
 | `polished.mp4` | a 30 to 60 second video: zooms on each click (unless `animation: false`), captions, a checklist that fills in, a freeze on every failure |
 | `report.md` | a "Manual verification" section with captioned stills, ready for a PR description |
 | a hosted report | an unlisted page with the video, criteria you can click to jump to, stills and logs |
-| a live view | while it runs, a local page that streams the desktop next to the checklist |
+| a live view | while it runs, a local page that streams the desktop next to the checklist; **Take over** gives you the mouse and keyboard (to sign in past SSO or an OTP, say) until you hand back |
 
 ## Why I built this
 

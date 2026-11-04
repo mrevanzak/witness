@@ -45,7 +45,7 @@ fbsetroot -solid '#15171c' 2>/dev/null || true
 node /opt/control/control.mjs >"$LOGS/control.log" 2>&1 & CONTROL_PID=$!
 
 if [ "${ENABLE_VNC:-0}" = 1 ]; then
-	x11vnc -display :1 -viewonly -shared -forever -nopw -localhost -rfbport 5900 -quiet >"$LOGS/vnc.log" 2>&1 & PIDS+=($!)
+	x11vnc -display :1 -shared -forever -nopw -localhost -rfbport 5900 -quiet >"$LOGS/vnc.log" 2>&1 & PIDS+=($!)
 	websockify --web /usr/share/novnc 0.0.0.0:6080 127.0.0.1:5900 >"$LOGS/novnc.log" 2>&1 & PIDS+=($!)
 fi
 

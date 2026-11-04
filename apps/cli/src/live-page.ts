@@ -29,6 +29,13 @@ export const LIVE_PAGE = `<!doctype html>
 	.screen iframe { position: absolute; left: 0; top: -25px; width: 100%; height: calc(100% + 25px); border: 0; }
 	.screen .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font: 14px var(--mono); padding: 24px; text-align: center; }
 	.live { position: absolute; top: 12px; left: 12px; font: 500 12px var(--mono); letter-spacing: .1em; color: var(--paper); background: #0e0f10d9; border: 1px solid var(--hairline); border-radius: 4px; padding: 2px 8px; display: none; }
+	.screen.human { box-shadow: 0 0 0 2px var(--blocked); }
+	.screen.human .live { color: var(--blocked); border-color: var(--blocked); }
+	.takeover { font: 500 12px var(--mono); letter-spacing: .06em; color: var(--paper); background: transparent; border: 1px solid var(--hairline); border-radius: 4px; padding: 3px 10px; cursor: pointer; }
+	.takeover:hover { border-color: var(--paper); }
+	.takeover:focus-visible { outline: 2px solid var(--paper); outline-offset: 2px; }
+	.takeover.human { color: var(--ink); background: var(--blocked); border-color: var(--blocked); }
+	.control-note { font: 13px var(--mono); color: var(--blocked); }
 	.live::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--fail); margin-right: 7px; vertical-align: 1px; }
 	aside { display: flex; flex-direction: column; min-height: 0; }
 	h2 { font: 500 12px var(--mono); letter-spacing: .12em; color: var(--muted); margin: 0; padding-bottom: 10px; border-bottom: 1px solid var(--hairline); }
@@ -55,6 +62,8 @@ export const LIVE_PAGE = `<!doctype html>
 	<span class="brand">witness</span>
 	<span class="meta" id="meta">waiting for the run…</span>
 	<span class="phase" id="phase"></span>
+	<span class="control-note" id="control-note" role="status" hidden></span>
+	<button type="button" class="takeover" id="takeover" hidden>Take over</button>
 	<span class="chip" id="overall">running</span>
 </header>
 <main>
@@ -125,18 +134,22 @@ export const LIVE_PAGE = `<!doctype html>
 			const f = document.querySelector(".screen iframe");
 			if (f) f.remove();
 			$("live").style.display = "none";
+			$("takeover").hidden = true;
 			if (!$("screen-empty")) { const empty = document.createElement("div"); empty.className = "empty"; empty.id = "screen-empty"; document.querySelector(".screen").prepend(empty); }
 			$("screen-empty").textContent = "Starting the computer…";
 		}
 		if (e.event === "computer.created") {
 			if (d.liveView) {
 				if ($("screen-empty")) $("screen-empty").remove();
+				liveView = d.liveView;
 				const f = document.createElement("iframe");
-				f.src = d.liveView; f.title = "The computer's desktop";
+				f.src = desktopSrc(); f.title = "The computer's desktop";
 				document.querySelector(".screen").prepend(f);
 				$("live").style.display = "inline-block";
+				$("takeover").hidden = false;
 			}
 		}
+		if (e.event === "takeover") { human = !!d.human; paused = !!d.paused; renderControl(); }
 		if (e.event === "plan.done" && Array.isArray(d.criteria)) d.criteria.forEach(declare);
 		if (e.event === "criterion.declared") declare(d);
 		if (side === "before" && (e.event === "verdict" || e.event === "run.blocked" || e.event === "boot.blocked")) {
@@ -152,10 +165,39 @@ export const LIVE_PAGE = `<!doctype html>
 		}
 	}
 
+	// The desktop opens watching (noVNC view_only); taking over reconnects it with input on.
+	// noVNC lite reads any view_only value, even "false", as on: drop the parameter instead.
+	let liveView = "";
+	let human = false;
+	let paused = false;
+	const desktopSrc = () => {
+		if (!human) return liveView;
+		const u = new URL(liveView);
+		u.searchParams.delete("view_only");
+		return u.href;
+	};
+	function renderControl() {
+		const f = document.querySelector(".screen iframe");
+		if (f && f.src !== desktopSrc()) { f.src = desktopSrc(); if (human) f.addEventListener("load", () => f.focus(), { once: true }); }
+		document.querySelector(".screen").classList.toggle("human", human);
+		$("live").textContent = human ? "YOU HAVE CONTROL" : "LIVE";
+		$("takeover").textContent = human ? "Hand back" : "Take over";
+		$("takeover").classList.toggle("human", human);
+		$("takeover").setAttribute("aria-pressed", String(human));
+		$("control-note").hidden = !human;
+		$("control-note").textContent = paused ? "the driver waits until you hand back" : "the run keeps acting too";
+	}
+	$("takeover").onclick = async () => {
+		const res = await fetch("/takeover", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ human: !human }) }).catch(() => null);
+		if (!res || !res.ok) $("phase").textContent = "could not switch control (is the run still going?)";
+	};
+
 	// The computer is torn down after the verdict: show where the evidence is instead of a dead stream.
 	function finish(text) {
 		const f = document.querySelector(".screen iframe");
 		if (f) f.remove();
+		$("takeover").hidden = true; $("control-note").hidden = true;
+		document.querySelector(".screen").classList.remove("human");
 		let empty = $("screen-empty");
 		if (!empty) { empty = document.createElement("div"); empty.className = "empty"; empty.id = "screen-empty"; document.querySelector(".screen").prepend(empty); }
 		empty.textContent = text + (runDir ? "\\n" + runDir : "");
@@ -167,7 +209,7 @@ export const LIVE_PAGE = `<!doctype html>
 
 	const source = new EventSource("/events");
 	source.onmessage = (m) => onEvent(JSON.parse(m.data));
-	source.onerror = () => { $("phase").textContent = "run finished (live view closed)"; $("live").style.display = "none"; source.close(); };
+	source.onerror = () => { $("phase").textContent = "run finished (live view closed)"; $("live").style.display = "none"; $("takeover").hidden = true; source.close(); };
 </script>
 </body>
 </html>

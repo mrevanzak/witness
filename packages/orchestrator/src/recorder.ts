@@ -82,6 +82,8 @@ export type ToolCall = Data.TaggedEnum<{
 	/** A full-resolution still for the report, with the sentence that says what it proves. */
 	Still: { readonly name: string; readonly caption: string }
 	Note: { readonly line: string }
+	/** A caption in the step log and the video, with no action (e.g. a person taking over). */
+	Caption: { readonly label: string }
 	Preview: { readonly line: string }
 	Intro: { readonly line: string }
 }>
@@ -335,6 +337,11 @@ export const makeRecorder = Effect.fn("makeRecorder")(function* (
 					yield* Ref.set(active, Option.some(id))
 					yield* step({ at: beganAt, label: `${id}: ${c.description}`, tool: "begin_criterion" })
 					return { screen: Option.none(), text: `Started ${id}.` }
+				}),
+			Caption: ({ label }) =>
+				Effect.gen(function* () {
+					yield* step({ at: yield* now, label, tool: "step" })
+					return { screen: Option.none(), text: "Noted." }
 				}),
 			Click: ({ button, label, x, y }) => {
 				const p = { x: space.toScreen(x), y: space.toScreen(y) }

@@ -108,7 +108,12 @@ const runFlags = {
 	),
 	task: Flag.String("task").pipe(Flag.withDescription("What the change is supposed to do"), Flag.optional),
 	taskFile: Flag.FileText("task-file").pipe(Flag.withDescription("Read the task from a file"), Flag.optional),
-	vnc: Flag.Boolean("vnc").pipe(Flag.withDescription("Expose the computer's noVNC endpoint"), Flag.withDefault(false)),
+	vnc: Flag.Boolean("vnc").pipe(
+		Flag.withDescription(
+			"Print the computer's noVNC URL (with --no-live; it opens watching, drop view_only=true to take over)"
+		),
+		Flag.withDefault(false)
+	),
 	walkthrough: Flag.String("walkthrough").pipe(
 		Flag.withDescription(
 			"Walkthrough mode: a Playwright spec drives the app (one of the app's own, run at the exact commit, or a file outside the repo)"
@@ -181,8 +186,8 @@ const verifyModeOf = (mode: Exclude<RunMode, { _tag: "Session" }>): VerifyMode =
 }
 
 /** Opens the live view for whoever started the run (a person or an agent), never in CI. */
-const openLive = Effect.fnUntraced(function* () {
-	const live = yield* startLive()
+const openLive = Effect.fnUntraced(function* (onTakeover?: (human: boolean) => Effect.Effect<void>) {
+	const live = yield* startLive(onTakeover)
 	yield* Console.log(`live view: ${live.url}`)
 	const noOpen = yield* Config.Boolean("WITNESS_NO_OPEN").pipe(Config.withDefault(false))
 	const ci = yield* Config.Boolean("CI").pipe(Config.withDefault(false))
@@ -232,11 +237,12 @@ const run = Command.make(
 						Effect.map((host) => ({
 							finished: host.finished,
 							mode: { _tag: "Session", program: host.program } as const,
+							takeover: host.takeover,
 						}))
 					)
-				: { finished: Effect.void, mode: verifyModeOf(mode) }
+				: { finished: Effect.void, mode: verifyModeOf(mode), takeover: undefined }
 		const verifyMode: VerifyMode = prepared.mode
-		const live = f.live ? Option.some(yield* openLive()) : Option.none()
+		const live = f.live ? Option.some(yield* openLive(prepared.takeover)) : Option.none()
 		const outcome: VerifyOutcome = yield* verify({
 			base: f.base,
 			configPath: f.config,
