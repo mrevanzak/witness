@@ -41,6 +41,11 @@ export const CHROME_FLAGS: readonly string[] = [
 	"--no-sandbox",
 	"--test-type",
 	"--disable-gpu",
+	// No GPU in the container: software WebGL (SwiftShader) so three.js/canvas apps render.
+	"--use-gl=angle",
+	"--use-angle=swiftshader",
+	"--enable-unsafe-swiftshader",
+	"--ignore-gpu-blocklist",
 	"--hide-crash-restore-bubble",
 	"--disable-features=Translate,MediaRouter",
 ]
