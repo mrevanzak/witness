@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { gestureFor } from "../src/device/gestures.ts"
 import { parseScreenTree } from "../src/device/screen-tree.ts"
-import { pickSimulator } from "../src/device-provider.ts"
+import { pickDeviceType, pickImage, pickSimulator } from "../src/device-provider.ts"
 
 const SCREEN = { height: 2000, width: 1000 }
 
@@ -36,6 +36,34 @@ describe("parseScreenTree", () => {
 		// Centre of (0.142, 0.515, 0.348, 0.055) on 1000x2000.
 		assert.deepStrictEqual([elements[1]?.x, elements[1]?.y, elements[1]?.w, elements[1]?.h], [316, 1085, 348, 110])
 		assert.strictEqual(text, "Open in “The App”?")
+	})
+})
+
+const ANDROID = `Source: android-devtools
+Mode: nested
+Coordinates are normalized [0,1] fractions of the screen (x, y, width, height), not pixels.
+
+ROOT  Screen (0.000, 0.000, 1.000, 1.000)
+
+  ComposeView  (0.000, 0.000, 1.000, 1.000)
+    StaticText "The Masjid App"  (0.205, 0.083, 0.281, 0.021)
+    TextField "http://localhost:8081" [clickable,long-clickable]  (0.136, 0.392, 0.728, 0.052)
+    View "Home" [clickable,disabled]  (0.039, 0.909, 0.281, 0.065)
+      View "Home"  (0.151, 0.918, 0.058, 0.026)`
+
+describe("parseScreenTree on Android", () => {
+	it("reads nested lines, roles without the AX prefix and the disabled flag", () => {
+		const { elements, text } = parseScreenTree(ANDROID, SCREEN)
+		assert.deepStrictEqual(
+			elements.map((e) => [e.tag, e.role, e.name, e.disabled]),
+			[
+				["StaticText", "statictext", "The Masjid App", undefined],
+				["TextField", "textfield", "http://localhost:8081", undefined],
+				["View", "view", "Home", true],
+				["View", "view", "Home", undefined],
+			]
+		)
+		assert.strictEqual(text, "The Masjid App")
 	})
 })
 
@@ -123,5 +151,35 @@ describe("pickSimulator", () => {
 	})
 	it("says what is installed when the wanted runtime is not", () => {
 		assert.match(String(pickSimulator(runtimes, { runtime: "iOS 27.0" })), /installed: iOS 26.5, iOS 26.10/)
+	})
+})
+
+describe("pickImage", () => {
+	const abi = process.arch === "arm64" ? "arm64-v8a" : "x86_64"
+	const image = (api: number, tag: string) => ({ abi, api, path: `system-images;android-${api};${tag};${abi}`, tag })
+	const images = [
+		image(34, "google_apis"),
+		image(35, "google_apis_playstore"),
+		image(35, "google_apis"),
+		image(36, "android-tv"),
+	]
+	it("defaults to the newest phone image, Google APIs before Google Play", () => {
+		assert.strictEqual(pickImage(images, undefined), `system-images;android-35;google_apis;${abi}`)
+	})
+	it("takes an API level, or a level and a tag", () => {
+		assert.strictEqual(pickImage(images, "android-34"), `system-images;android-34;google_apis;${abi}`)
+		assert.strictEqual(
+			pickImage(images, "android-35;google_apis_playstore"),
+			`system-images;android-35;google_apis_playstore;${abi}`
+		)
+	})
+	it("says what is installed when nothing matches", () => {
+		assert.throws(() => pickImage(images, "android-30"), /installed: system-images;android-34/)
+	})
+})
+
+describe("pickDeviceType", () => {
+	it("takes the newest numbered Pixel", () => {
+		assert.strictEqual(pickDeviceType(["pixel_6a", "pixel_9", "pixel_10", "pixel_9_pro", "Nexus 5"]), "pixel_10")
 	})
 })

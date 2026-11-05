@@ -65,17 +65,24 @@ const Seconds = Schema.Finite.pipe(Schema.check(Schema.isGreaterThan(0)))
  * run creates a fresh simulator, installs `app` on it and deletes it afterwards.
  */
 export const DeviceConfig = Schema.Struct({
-	/** The built app to install (an iOS simulator `.app`), e.g. a development build that loads JS from `start`. */
+	/**
+	 * The built app to install: an iOS simulator `.app` or an Android `.apk`, e.g. a
+	 * development build that loads its JS from `start`.
+	 */
 	app: NonEmpty,
-	platform: Schema.Literal("ios"),
-	/** Simulator runtime, e.g. `iOS 26.5`; defaults to the newest installed. */
+	platform: Schema.Literals(["ios", "android"]),
+	/**
+	 * iOS: simulator runtime, e.g. `iOS 26.5`. Android: system image, e.g. `android-35`
+	 * or `android-35;google_apis`. Default: the newest installed.
+	 */
 	runtime: Schema.optionalKey(NonEmpty),
 	/**
-	 * simslim categories the app needs left running (`simslim profiles` lists them),
-	 * when simslim is installed. Default: `store` (push, StoreKit) and `web` (universal links).
+	 * What the app needs left running when the device is slimmed: simslim categories on
+	 * iOS (default `store`, `web`: push and universal links), avdslim `--skip` groups on
+	 * Android (default `location`). Ignored without simslim / avdslim.
 	 */
 	services: Schema.optionalKey(Schema.Array(NonEmpty)),
-	/** Device type, e.g. `iPhone 17 Pro`; defaults to the runtime's newest iPhone. */
+	/** iOS: device type, e.g. `iPhone 17 Pro`. Android: device profile, e.g. `pixel_9`. Default: the newest phone. */
 	type: Schema.optionalKey(NonEmpty),
 })
 export type DeviceConfig = typeof DeviceConfig.Type

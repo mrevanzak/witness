@@ -29,22 +29,25 @@ git -C <repo> rev-parse HEAD                                                    
 
 Heavy stacks (Next + CMS builds) need `--memory-gb 9 --cpus 6`.
 
-**A mobile app** (React Native, Expo, native iOS) runs on a fresh iOS simulator instead: the config gets a `device` key with a simulator build of the app (`.app`), and `url` is a deep link that opens the app on its dev server (README, "Mobile apps"). The build only covers changes to JavaScript; if the change touches native code (`ios/`, native dependencies, the React Native version), say the build must be rebuilt first and stop. On a phone, `click` taps, `right_click` long-presses, `drag` swipes, `scroll <dy>` swipes the content, and `key` takes `Return`, `BackSpace`, `Escape`, `Tab` or `home`. No live view, no walkthroughs, no `eval`.
+**A mobile app** (React Native, Expo, native iOS or Android) runs on a fresh iOS simulator or Android emulator instead: the config gets a `device` key with a build of the app (`.app` for iOS, `.apk` for Android), and `url` is a deep link that opens the app on its dev server (README, "Mobile apps"). An app shipped on both platforms usually has one config per platform; check both when the change isn't platform-specific. The build only covers changes to JavaScript; if the change touches native code (`ios/`, `android/`, native dependencies, the React Native version), say the build must be rebuilt first and stop. On a phone, `click` taps, `right_click` long-presses, `drag` swipes, `scroll <dy>` swipes the content, and `key` takes `Return`, `BackSpace`, `Escape`, `Tab`, `home` or (Android) `back`. Close the keyboard (`key back` on Android) before swiping near the bottom of the screen, or the swipe types. No live view, no walkthroughs, no `eval`.
 
-When simslim is installed, the simulator boots without the background services a test run doesn't need. `device.services` in the config lists what the app always needs (default `store,web`). Before the run, read the diff for system features the change touches, and keep their categories on with `--services`:
+When simslim (iOS) or avdslim (Android) is installed, the device boots without the background services a test run doesn't need. `device.services` in the config lists what the app always needs (iOS default `store,web`, Android default `location`). Before the run, read the diff for system features the change touches, and keep them on with `--services`:
 
-| The change uses | `--services` |
-|---|---|
-| Push notifications, in-app purchases | `store` (on by default) |
-| Universal links, Safari | `web` (on by default) |
-| Photo picker, photo library, saving images | `photos` |
-| Contacts, calendar, reminders, mail | `pim` |
-| iCloud, Sign in with Apple, keychain sync | `icloud` |
-| HealthKit, HomeKit | `health` |
-| Spotlight, Siri, dictation, speech | `search`, `siri` |
-| Wallet, App Clips, Apple Pay | `other` |
+| The change uses | iOS `--services` | Android `--services` |
+|---|---|---|
+| Push notifications, in-app purchases | `store` (default) | always on |
+| Universal links / app links, Safari | `web` (default) | always on |
+| Location | always on | `location` (default) |
+| Photo picker, photo library | `photos` | always on |
+| Contacts, calendar, reminders, mail | `pim` | always on |
+| iCloud / Google account sync | `icloud` | `sync` |
+| Bluetooth | always on | `bluetooth` |
+| HealthKit, HomeKit | `health` | always on |
+| Spotlight, Siri, dictation, speech | `search`, `siri` | always on |
+| Wallet, App Clips, Apple Pay | `other` | always on |
+| Background work (jobs, many cached apps) | always on | `bglimit` |
 
-Location, the share sheet and the rest of the core stay on regardless; `simslim profiles <id>` lists a category's services. If a feature fails in a way that looks like a missing system service, rerun with its category kept on before calling it a fail, and say in a note which categories the run kept.
+`simslim profiles <id>` and `avdslim profiles` list what each one turns off. If a feature fails in a way that looks like a missing system service, rerun with it kept on before calling it a fail, and say in a note what the run kept.
 
 Runs check the base commit first and then the change (`states: before-after`, the default), so the evidence shows the app before and after. The base commit's run is `<runDir>/before/`. Pass `--states after` to check only the change, for example on a boot check or when the user asks for it; `states: after` in the config makes that the default. Walkthrough and independent runs take `--parallel` to check both commits at once (about half the time, twice the memory); add it when the user asks for speed and the machine has room. Sessions always go in order.
 

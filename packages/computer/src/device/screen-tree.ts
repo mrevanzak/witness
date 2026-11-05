@@ -1,11 +1,12 @@
 // A device screen as the tester reads it: argent's `describe` text (one element
-// per line, frames as 0-1 fractions of the screen) turned into page elements in
-// screen pixels, the same shape the desktop's page snapshot has.
+// per line, frames as 0-1 fractions of the screen; iOS roles are `AXButton`,
+// Android ones `View` with flags like `[clickable,disabled]`) turned into page
+// elements in screen pixels, the same shape the desktop's page snapshot has.
 import type { PageElement, PageSnapshot } from "../protocol.ts"
 
 const QUOTED = String.raw`"((?:[^"\\]|\\.)*)"`
 const LINE = new RegExp(
-	String.raw`^\s*(AX\w+)(?: ${QUOTED})?(?: value=${QUOTED})?(?: id=${QUOTED})?(.*?)\s*\(([\d.]+), ([\d.]+), ([\d.]+), ([\d.]+)\)\s*$`
+	String.raw`^\s*([A-Za-z][\w.]*)(?: ${QUOTED})?(?: value=${QUOTED})?(?: id=${QUOTED})?(.*?)\s*\(([\d.]+), ([\d.]+), ([\d.]+), ([\d.]+)\)\s*$`
 )
 const unquote = (s: string | undefined) => (s === undefined ? undefined : s.replace(/\\(.)/g, "$1"))
 
@@ -13,7 +14,7 @@ const unquote = (s: string | undefined) => (s === undefined ? undefined : s.repl
 const NOISE = /scroll bar/i
 
 /** Roles a person reads rather than taps. */
-const TEXT_ROLES = new Set(["AXStaticText", "AXHeading"])
+const TEXT_ROLES = new Set(["AXStaticText", "AXHeading", "StaticText"])
 
 /** Parses argent `describe` text into elements (centres and sizes in screen pixels) and the screen's text. */
 export const parseScreenTree = (

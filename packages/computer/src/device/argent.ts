@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { pathToFileURL } from "node:url"
-import { Effect } from "effect"
+import { Effect, Schedule } from "effect"
 import { DeviceError } from "../computer.ts"
 import { messageOf } from "../message.ts"
 
@@ -53,7 +53,14 @@ export const loadArgent = Effect.tryPromise({
 				Effect.tryPromise({
 					catch: (e) => new DeviceError({ message: messageOf(e), operation: tool }),
 					try: () => client.callTool(tool, args).then((r) => r.data as T),
-				}),
+				}).pipe(
+					// A busy emulator drops off adb for a moment ("device offline"); the next try reaches it.
+					Effect.retry({
+						schedule: Schedule.spaced("1 second"),
+						times: 3,
+						while: (e) => /device offline|device '.*' not found/.test(e.message),
+					})
+				),
 		})
 	)
 )

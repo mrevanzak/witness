@@ -64,7 +64,7 @@ export type VerifyOptions = {
 	readonly mode: VerifyMode
 	/** Verify the base commit and the change at the same time (agent and spec modes; sessions stay in order). */
 	readonly parallel: boolean
-	/** Device apps: simslim categories this change needs, kept on beside witness.yaml's `device.services`. */
+	/** Device apps: what this change needs left on when slimmed (simslim categories, avdslim groups), beside `device.services`. */
 	readonly services?: readonly string[]
 	/** Called once the computer is up (live view). */
 	readonly onComputer?: (computer: Computer) => Effect.Effect<void>
@@ -322,6 +322,9 @@ const recordMode = (computer: Computer, side: Side, mode: Exclude<Prepared, { _t
 		}
 	})
 
+/** What stays on when a device is slimmed: push and universal links on iOS, location on Android. */
+const DEFAULT_SERVICES = { android: ["location"], ios: ["store", "web"] } as const
+
 const firstLine = (s: string) => s.split("\n")[0] ?? ""
 const scripted = (run: ModeRun, modelId: string): Judged => ({
 	modelId,
@@ -346,7 +349,7 @@ const runSide = (opts: VerifyOptions, side: Side) =>
 			Effect.gen(function* () {
 				const device = Option.map(side.config.device, (d) => ({
 					...d,
-					services: [...new Set([...(d.services ?? ["store", "web"]), ...(opts.services ?? [])])],
+					services: [...new Set([...(d.services ?? DEFAULT_SERVICES[d.platform]), ...(opts.services ?? [])])],
 				}))
 				const computer = yield* provider.create({
 					artifactsDir: run.computerDir,

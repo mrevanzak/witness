@@ -152,6 +152,17 @@ describe("parseWitnessConfig with a device app", () => {
 			)
 		})
 	)
+	it.effect("takes an Android app", () =>
+		Effect.gen(function* () {
+			const c = yield* parseWitnessConfig(
+				DEVICE.replace("platform: ios, app: ./App.app", "platform: android, app: ./app.apk")
+			)
+			assert.deepStrictEqual(
+				Option.map(c.device, (d) => [d.platform, d.app]),
+				Option.some(["android", "./app.apk"])
+			)
+		})
+	)
 	it.effect("refuses a deep link without a device", () =>
 		failsWith(DEVICE.replace(/^device:.*$/m, ""), "ConfigInvalidError", /absolute http\(s\) URL/)
 	)
