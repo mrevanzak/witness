@@ -15,6 +15,7 @@ import {
 	ServerError,
 	WindowMetrics,
 } from "../protocol.ts"
+import { childEnv } from "./proc.ts"
 
 const CDP_PORT = 9222
 /** On top of the shared flags: CDP for the control server, and a profile of its own. */
@@ -23,14 +24,6 @@ const SERVER_FLAGS = [
 	`--remote-debugging-port=${CDP_PORT}`,
 	"--user-data-dir=/tmp/chrome-profile",
 ]
-
-/** Environment for children: everything but the control token. */
-export const childEnv = (): Record<string, string> =>
-	Object.fromEntries(
-		Object.entries(process.env).filter(
-			(e): e is [string, string] => e[0] !== "CONTROL_TOKEN" && typeof e[1] === "string"
-		)
-	)
 
 /** Keeps Chromium running for the server's lifetime; killed with the server's scope. */
 export const ChromeLive = Layer.effectDiscard(

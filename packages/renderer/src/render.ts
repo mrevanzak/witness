@@ -81,16 +81,16 @@ export const readRenderedCut = Effect.fn("readRenderedCut")(function* (runDir: s
 // src/ here, dist/bin in the bundled CLI: ../remotion sits next to either (apps/cli/scripts/build.ts).
 const ENTRY = fileURLToPath(new URL("../remotion/index.ts", import.meta.url))
 
-const probeDuration = Effect.fnUntraced(function* (file: string) {
-	const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-	const out = yield* spawner
-		.string(ChildProcess.make("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file]))
-		.pipe(Effect.mapError(failed("ffprobe")))
-	return Number.parseFloat(out.trim())
-})
+/** ffprobe's JSON for a video's duration and first video stream. */
+const ProbeJson = Schema.fromJsonString(
+	Schema.Struct({
+		format: Schema.Struct({ duration: Schema.String }),
+		streams: Schema.Tuple([Schema.Struct({ height: Schema.Int, width: Schema.Int })]),
+	})
+)
 
-/** The recording's frame size: the computer's screen (a desktop, or a phone standing upright). */
-const probeSize = Effect.fnUntraced(function* (file: string) {
+/** A video's length in seconds and its frame size (the recorded screen: a desktop, or a phone standing upright). */
+const probe = Effect.fnUntraced(function* (file: string) {
 	const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
 	const out = yield* spawner
 		.string(
@@ -100,15 +100,15 @@ const probeSize = Effect.fnUntraced(function* (file: string) {
 				"-select_streams",
 				"v:0",
 				"-show_entries",
-				"stream=width,height",
+				"stream=width,height:format=duration",
 				"-of",
-				"csv=p=0",
+				"json",
 				file,
 			])
 		)
 		.pipe(Effect.mapError(failed("ffprobe")))
-	const [w, h] = out.trim().split(",").map(Number)
-	return w && h ? { h, w } : undefined
+	const { format, streams } = yield* Schema.decodeUnknownEffect(ProbeJson)(out).pipe(Effect.mapError(failed("ffprobe")))
+	return { duration: Number.parseFloat(format.duration), screen: { h: streams[0].height, w: streams[0].width } }
 })
 
 /** The composition's props for a finished run (pure timeline math over its decoded artifacts). */
@@ -118,7 +118,7 @@ const propsForRun = Effect.fnUntraced(function* (
 	settings: RenderSettings,
 	label: string | undefined,
 	info: Option.Option<RunInfo>,
-	screen: { readonly w: number; readonly h: number } | undefined
+	screen: { readonly w: number; readonly h: number }
 ) {
 	const steps = yield* readSteps(runDir).pipe(Effect.mapError(failed(RUN_FILES.steps)))
 	const verdict = yield* requireRunFile(runDir, RUN_FILES.verdict, Verdict).pipe(
@@ -134,7 +134,7 @@ const propsForRun = Effect.fnUntraced(function* (
 		options: {
 			animate: settings.animate,
 			endCardSec: LAYOUTS[settings.layout].endCardSec,
-			...(screen ? { screen } : {}),
+			screen,
 		},
 		overall: verdict.overall,
 		sourceDuration,
@@ -199,14 +199,8 @@ export const renderRun = Effect.fn("renderRun")(function* (
 		layout: opts.layout ?? defaults?.evidence ?? "pr",
 	}
 	const spec = LAYOUTS[settings.layout]
-	const { props, seek } = yield* propsForRun(
-		runDir,
-		yield* probeDuration(raw),
-		settings,
-		opts.label,
-		info,
-		yield* probeSize(raw)
-	)
+	const source = yield* probe(raw)
+	const { props, seek } = yield* propsForRun(runDir, source.duration, settings, opts.label, info, source.screen)
 	const { timeline } = props
 
 	const outDir = path.join(runDir, "render")
@@ -247,7 +241,7 @@ export const renderRun = Effect.fn("renderRun")(function* (
 		yield* fs.remove(vtt, { force: true }).pipe(Effect.mapError(failed("captions.vtt")))
 	}
 
-	const cut: RenderedCut = { ...settings, durationSec: yield* probeDuration(polished), seek }
+	const cut: RenderedCut = { ...settings, durationSec: (yield* probe(polished)).duration, seek }
 	yield* Schema.encodeEffect(RenderedCutJson)(cut).pipe(
 		Effect.flatMap((json) => fs.writeFileString(path.join(outDir, "rendered.json"), json)),
 		Effect.mapError(failed("render/rendered.json"))

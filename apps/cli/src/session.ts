@@ -60,10 +60,10 @@ const SessionStatus = Schema.Union([
 	Schema.TaggedStruct("Booting", { seq: Schema.Int }),
 	Schema.TaggedStruct("Ready", {
 		carried: Schema.Array(Schema.String),
-		/** What coordinates mean on this side's screen. */
-		coordinates: Schema.String,
 		/** That side's run folder. */
 		runDir: Schema.String,
+		/** This side's screen and what coordinates mean on it. */
+		screen: Schema.String,
 		seq: Schema.Int,
 		sha: Schema.String,
 		side: Schema.Literals(["before", "after", "single"]),
@@ -244,8 +244,8 @@ export const sessionHost = Effect.fnUntraced(function* (runDir: string, idleMs: 
 			yield* setStatus((seq) => ({
 				_tag: "Ready",
 				carried: side.carried.map((c) => c.id),
-				coordinates: recorder.coordinates,
 				runDir: recorder.runDir,
+				screen: recorder.screenText,
 				seq,
 				sha: side.sha,
 				side: Option.getOrElse(side.state, () => "single" as const),
@@ -358,7 +358,7 @@ const readyText = (s: Ready) =>
 			: []),
 		"SESSION READY. Drive it with `witness act <action> [args] [--label <caption>]`:",
 		...Object.values(ACTION_SPECS).map((a) => `  ${a.usage}`),
-		`Coordinates are in ${s.coordinates}.`,
+		s.screen,
 	].join("\n")
 
 /** Prints the verdict in `dir` and returns its exit code. */

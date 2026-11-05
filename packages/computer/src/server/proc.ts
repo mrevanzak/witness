@@ -37,3 +37,12 @@ export const collectCapped = <E, R>(stream: Stream.Stream<Uint8Array, E, R>, max
 		})
 		return Stream.mkUint8Array(capped).pipe(Effect.map((b) => ({ text: new TextDecoder().decode(b), truncated })))
 	})
+
+/** This process's environment minus the variables `drop` names. */
+export const envWithout = (drop: (name: string) => boolean): Record<string, string> =>
+	Object.fromEntries(
+		Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string" && !drop(e[0]))
+	)
+
+/** Environment for the computer's children: everything but the control token. */
+export const childEnv = () => envWithout((name) => name === "CONTROL_TOKEN")
