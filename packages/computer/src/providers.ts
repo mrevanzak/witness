@@ -11,11 +11,8 @@ export const ComputerProviderLive = Layer.effect(
 		const docker = yield* makeDockerProvider
 		const device = yield* makeDeviceProvider
 		return ComputerProvider.of({
-			cleanupOrphans: Effect.all([
-				docker.cleanupOrphans,
-				device.cleanupOrphans.pipe(Effect.orElseSucceed(() => 0)),
-			]).pipe(Effect.map(([a, b]) => a + b)),
-			create: (spec) => (spec.device ? device.create(spec) : docker.create(spec)),
+			cleanupOrphans: Effect.all([docker.cleanupOrphans, device.cleanupOrphans]).pipe(Effect.map(([a, b]) => a + b)),
+			create: (spec) => (spec.device ? device.create(spec, spec.device) : docker.create(spec)),
 		})
 	})
 )

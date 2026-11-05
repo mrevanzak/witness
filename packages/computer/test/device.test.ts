@@ -1,5 +1,8 @@
 import { assert, describe, it } from "@effect/vitest"
+import { Effect } from "effect"
+import { retriable } from "../src/device/argent.ts"
 import { gestureFor } from "../src/device/gestures.ts"
+import { isCredential, waitUntil } from "../src/device/host.ts"
 import { parseScreenTree } from "../src/device/screen-tree.ts"
 import { pickDeviceType, pickImage, pickSimulator } from "../src/device-provider.ts"
 
@@ -150,7 +153,7 @@ describe("pickSimulator", () => {
 		})
 	})
 	it("says what is installed when the wanted runtime is not", () => {
-		assert.match(String(pickSimulator(runtimes, { runtime: "iOS 27.0" })), /installed: iOS 26.5, iOS 26.10/)
+		assert.throws(() => pickSimulator(runtimes, { runtime: "iOS 27.0" }), /installed: iOS 26.5, iOS 26.10/)
 	})
 })
 
@@ -182,4 +185,53 @@ describe("pickDeviceType", () => {
 	it("takes the newest numbered Pixel", () => {
 		assert.strictEqual(pickDeviceType(["pixel_6a", "pixel_9", "pixel_10", "pixel_9_pro", "Nexus 5"]), "pixel_10")
 	})
+})
+
+describe("isCredential", () => {
+	it("keeps keys and tokens from the app's commands, and the rest of the environment in", () => {
+		for (const name of [
+			"ANTHROPIC_API_KEY",
+			"GH_TOKEN",
+			"AWS_SECRET_ACCESS_KEY",
+			"npm_config_password",
+			"GOOGLE_CREDENTIALS",
+		]) {
+			assert.isTrue(isCredential(name), name)
+		}
+		for (const name of ["PATH", "HOME", "ANDROID_HOME", "KEYCHAIN_PATH", "TOKENIZERS_PARALLELISM"]) {
+			assert.isFalse(isCredential(name), name)
+		}
+	})
+})
+
+describe("retriable", () => {
+	it("tries a look again after the device dropped off, never a tap or keystroke", () => {
+		assert.isTrue(retriable("describe", "error: device offline"))
+		assert.isTrue(retriable("screenshot", "device 'emulator-5560' not found"))
+		assert.isFalse(retriable("gesture-tap", "error: device offline"))
+		assert.isFalse(retriable("keyboard", "error: device offline"))
+		assert.isFalse(retriable("describe", "no such element"))
+	})
+})
+
+describe("waitUntil", () => {
+	it.live("checks until the condition holds", () =>
+		Effect.gen(function* () {
+			let checks = 0
+			const ok = yield* waitUntil(
+				Effect.sync(() => {
+					checks += 1
+					return checks === 3
+				}),
+				"1 millis",
+				"1 second"
+			)
+			assert.deepStrictEqual([ok, checks], [true, 3])
+		})
+	)
+	it.live("gives up once the time is over", () =>
+		Effect.gen(function* () {
+			assert.isFalse(yield* waitUntil(Effect.succeed(false), "5 millis", "30 millis"))
+		})
+	)
 })

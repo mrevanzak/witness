@@ -64,7 +64,7 @@ const Seconds = Schema.Finite.pipe(Schema.check(Schema.isGreaterThan(0)))
  * A mobile app on a simulator instead of a web app in the Linux computer. Each
  * run creates a fresh simulator, installs `app` on it and deletes it afterwards.
  */
-export const DeviceConfig = Schema.Struct({
+const DeviceFile = Schema.Struct({
 	/**
 	 * The built app to install: an iOS simulator `.app` or an Android `.apk`, e.g. a
 	 * development build that loads its JS from `start`.
@@ -85,6 +85,12 @@ export const DeviceConfig = Schema.Struct({
 	/** iOS: device type, e.g. `iPhone 17 Pro`. Android: device profile, e.g. `pixel_9`. Default: the newest phone. */
 	type: Schema.optionalKey(NonEmpty),
 })
+
+/** What stays on when a device is slimmed, unless witness.yaml says: push and universal links on iOS, location on Android. */
+const DEFAULT_SERVICES = { android: ["location"], ios: ["store", "web"] } as const
+
+/** The device app as a run uses it: `services` filled in with the platform's default. */
+export const DeviceConfig = Schema.Struct({ ...DeviceFile.fields, services: Schema.Array(NonEmpty) })
 export type DeviceConfig = typeof DeviceConfig.Type
 
 /** Any absolute URL: http(s) for a web app, or a deep link (`myapp://...`) that opens the device app. */
@@ -99,7 +105,7 @@ const AppUrl = Schema.String.pipe(
 /** The file shape (snake_case keys, as written in YAML). */
 const ConfigFile = Schema.Struct({
 	animation: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(true))),
-	device: Schema.optionalKey(DeviceConfig),
+	device: Schema.optionalKey(DeviceFile),
 	env: EnvMap.pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
 	evidence: Schema.optionalKey(EvidenceDestination),
 	files: Schema.Record(Schema.String, NonEmpty)
@@ -126,7 +132,7 @@ const ConfigFile = Schema.Struct({
 }).check(
 	Schema.makeFilter((f) => {
 		if (f.device === undefined) {
-			return /^https?:\/\/[^\s/]+/.test(f.url)
+			return Schema.is(HttpUrl)(f.url)
 				? undefined
 				: { issue: "must be an absolute http(s) URL (only a device app opens a deep link)", path: ["url"] }
 		}
@@ -192,7 +198,10 @@ const ConfigFromFile = ConfigFile.pipe(
 		SchemaTransformation.transform({
 			decode: (f) => ({
 				animation: f.animation,
-				device: Option.fromUndefinedOr(f.device),
+				device: Option.map(Option.fromUndefinedOr(f.device), (d) => ({
+					...d,
+					services: d.services ?? DEFAULT_SERVICES[d.platform],
+				})),
 				env: f.env,
 				evidence: Option.fromUndefinedOr(f.evidence),
 				files: f.files,

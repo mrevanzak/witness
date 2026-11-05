@@ -49,8 +49,8 @@ export type ComputerSpec = {
 	/** Host directory bind-mounted at /artifacts. */
 	readonly artifactsDir: string
 	readonly cpus?: number
-	/** A simulator for a device app instead of the Linux computer (`services`: the simslim categories it keeps). */
-	readonly device?: DeviceConfig & { readonly services: readonly string[] }
+	/** A simulator or emulator for a device app instead of the Linux computer. */
+	readonly device?: DeviceConfig
 	readonly enableVnc?: boolean
 	/** Leave the computer running when the scope closes. */
 	readonly keep?: boolean
@@ -92,6 +92,6 @@ export class ComputerProvider extends Context.Service<
 			Scope.Scope
 		>
 		/** Removes computers and networks whose witness process has exited; returns how many runs it cleaned. */
-		readonly cleanupOrphans: Effect.Effect<number, DockerError | DeviceError>
+		readonly cleanupOrphans: Effect.Effect<number, DockerError>
 	}
 >()("witness/computer/ComputerProvider") {}

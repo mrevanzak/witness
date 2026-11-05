@@ -6,20 +6,23 @@
 //
 // shortcut: simulators and emulators only; physical phones are next.
 
-import { type ChildProcess, spawn } from "node:child_process"
-import { mkdir, readFile, rm, stat } from "node:fs/promises"
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { Effect, Option } from "effect"
-import { type Computer, ComputerProvider, type ComputerSpec, ControlError, DeviceError } from "./computer.ts"
-import { cleanupEmulators, createEmulator } from "./device/android.ts"
+import type { DeviceConfig } from "@witness/domain"
+import { Effect, FileSystem, Option, Path, Scope } from "effect"
+import { ChildProcessSpawner } from "effect/process"
+import { type Computer, type ComputerSpec, ControlError, DeviceError } from "./computer.ts"
+import { makeAndroid } from "./device/android.ts"
 import { loadArgent } from "./device/argent.ts"
 import { gestureFor } from "./device/gestures.ts"
-import { failWith, host, q, type Recording, runShell, sleep, stopGroup } from "./device/host.ts"
-import { cleanupSimulators, createSimulator } from "./device/ios.ts"
+import { type Backend, failWith, hostEnv, makeHost, q, type Recording } from "./device/host.ts"
+import { makeIos } from "./device/ios.ts"
 import { parseScreenTree } from "./device/screen-tree.ts"
 import { messageOf } from "./message.ts"
 import type { Health, RecordingResult, Screenshot, ShotOptions } from "./protocol.ts"
+import { Artifacts, makeArtifacts } from "./server/artifacts.ts"
+import { makeExec } from "./server/exec.ts"
 
 export { pickDeviceType, pickImage } from "./device/android.ts"
 export { pickSimulator } from "./device/ios.ts"
@@ -30,19 +33,25 @@ const pngSize = (png: Uint8Array) => {
 }
 
 export const makeDeviceProvider = Effect.gen(function* () {
-	const cleanupOrphans = Effect.all([
-		cleanupSimulators.pipe(Effect.orElseSucceed(() => 0)),
-		cleanupEmulators.pipe(Effect.orElseSucceed(() => 0)),
-	]).pipe(
-		Effect.map(([a, b]) => a + b),
+	const fs = yield* FileSystem.FileSystem
+	const path = yield* Path.Path
+	const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+	/** Runs `effect` with this Mac's file system and process spawner. */
+	const onMac = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+		effect.pipe(
+			Effect.provideService(FileSystem.FileSystem, fs),
+			Effect.provideService(Path.Path, path),
+			Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)
+		)
+	const host = yield* makeHost
+	const backends: Record<DeviceConfig["platform"], Backend> = { android: makeAndroid(host), ios: makeIos(host) }
+
+	const cleanupOrphans = Effect.forEach(Object.values(backends), (b) => b.cleanupOrphans).pipe(
+		Effect.map((counts) => counts.reduce((a, b) => a + b, 0)),
 		Effect.withSpan("DeviceComputerProvider.cleanupOrphans")
 	)
 
-	const create = Effect.fn("DeviceComputerProvider.create")(function* (spec: ComputerSpec) {
-		const config = spec.device
-		if (config === undefined) {
-			return yield* new DeviceError({ message: "no device in the spec", operation: "create" })
-		}
+	const create = Effect.fn("DeviceComputerProvider.create")(function* (spec: ComputerSpec, config: DeviceConfig) {
 		const argent = yield* loadArgent
 		const artifacts = resolve(spec.artifactsDir)
 		const workDir = join(tmpdir(), `witness-${spec.runId}`)
@@ -55,30 +64,30 @@ export const makeDeviceProvider = Effect.gen(function* () {
 				await stat(config.app)
 			},
 		})
-		if (!spec.keep) {
-			yield* Effect.addFinalizer(() => Effect.promise(() => rm(workDir, { force: true, recursive: true })))
-		}
+		// What the run leaves on this Mac (the device, the copy of the commit) goes when this
+		// scope closes; a kept run's scope never does.
+		const lifetime = spec.keep ? yield* Scope.make() : yield* Effect.scope
+		yield* Scope.addFinalizer(
+			lifetime,
+			Effect.promise(() => rm(workDir, { force: true, recursive: true }))
+		)
 
 		// 1. A fresh device with the app on it.
-		const device =
-			config.platform === "ios"
-				? yield* createSimulator(spec.runId, config, spec.keep === true, argent)
-				: yield* createEmulator(spec.runId, config, spec.keep === true, argent)
+		const device = yield* backends[config.platform].create(spec.runId, config, argent).pipe(Scope.provide(lifetime))
 		const udid = device.id
+		if (spec.keep) {
+			yield* Effect.logInfo("device kept", { cleanup: `${device.cleanup}; rm -rf ${workDir}`, id: udid })
+		}
 
-		// 2. Processes the run starts on the host (the app's dev server) stop with it.
-		const env: NodeJS.ProcessEnv = { ...process.env, WITNESS_DEVICE_ID: udid }
-		const spawned: ChildProcess[] = []
-		yield* Effect.addFinalizer(() =>
-			spec.keep
-				? Effect.sync(() => {
-						// Kept processes outlive witness, so they must not hold its event loop open.
-						for (const c of spawned) {
-							c.unref()
-						}
-					}).pipe(Effect.andThen(Effect.logInfo("processes kept", { pids: spawned.map((c) => c.pid) })))
-				: Effect.promise(() => Promise.all(spawned.map((c) => stopGroup(c, 3000)))).pipe(Effect.asVoid)
-		)
+		// 2. The app's commands (setup, its dev server) run on this Mac, as in the computer: logs
+		// under the artifacts, no witness credentials, and stopped with the run unless it is kept.
+		const files = yield* makeArtifacts(artifacts).pipe(onMac)
+		const commands = yield* makeExec({
+			cwd: app,
+			env: { ...hostEnv(), WITNESS_DEVICE_ID: udid },
+			keepSpawned: spec.keep === true,
+			shell: ["sh", "-c"],
+		}).pipe(Effect.provideService(Artifacts, files), onMac)
 
 		const control = (endpoint: string) => (e: unknown) => new ControlError({ endpoint, message: messageOf(e) })
 
@@ -101,7 +110,7 @@ export const makeDeviceProvider = Effect.gen(function* () {
 				let mime: Screenshot["mime"] = "image/png"
 				if (options.format === "jpeg") {
 					const jpg = `${image}.jpg`
-					yield* host(
+					yield* host.run(
 						"jpeg",
 						`sips -s format jpeg -s formatOptions ${options.quality ?? 80} ${q(image)} --out ${q(jpg)}`
 					)
@@ -124,7 +133,7 @@ export const makeDeviceProvider = Effect.gen(function* () {
 			// a constant 30 fps that holds the last frame until the real stop keeps step times true.
 			const duration = (stoppedAt - startedAt) / 1000
 			const mp4 = join(artifacts, "raw.mp4")
-			yield* host(
+			yield* host.run(
 				"remux",
 				`ffmpeg -hide_banner -loglevel error -y -i ${q(file)} -an -vf ${q(`fps=30,tpad=stop_mode=clone:stop_duration=${duration}`)} -t ${duration} -c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p -movflags +faststart ${q(mp4)}`,
 				600_000
@@ -138,7 +147,7 @@ export const makeDeviceProvider = Effect.gen(function* () {
 				Effect.gen(function* () {
 					const actionAt = Date.now()
 					if (action.type === "wait") {
-						yield* sleep(action.ms)
+						yield* Effect.sleep(`${action.ms} millis`)
 					} else {
 						const g = gestureFor(action, screen)
 						if (g && "unsupported" in g) {
@@ -151,32 +160,21 @@ export const makeDeviceProvider = Effect.gen(function* () {
 							cursor = action.type === "drag" ? { x: action.to_x, y: action.to_y } : { x: action.x, y: action.y }
 						}
 					}
-					yield* sleep(settle_ms ?? 300)
+					yield* Effect.sleep(`${settle_ms ?? 300} millis`)
 					return { ...(yield* shoot(shot)), actionAt }
 				}).pipe(Effect.mapError(control("act"))),
 			consoleMessages: Effect.succeed([]),
 			evaluate: () =>
 				Effect.fail(new ControlError({ endpoint: "evaluate", message: "eval is not available on a device app" })),
-			exec: (r) =>
-				Effect.tryPromise({
-					catch: control("exec"),
-					try: () =>
-						runShell(r.cmd, {
-							cwd: r.cwd ?? app,
-							env: { ...env, ...r.env },
-							maxBytes: r.max_bytes ?? 1_000_000,
-							timeoutMs: r.timeout_ms ?? 30_000,
-						}),
-				}),
+			exec: (r) => commands.run(r).pipe(Effect.mapError(control("exec"))),
 			health: Effect.sync((): Health => ({ browser: true, recording: Option.isSome(recording) })),
 			id: udid,
 			kind: "phone",
 			liveView: undefined,
 			logs: (file, tail = 200) =>
-				Effect.promise(() =>
-					readFile(join(artifacts, file), "utf8")
-						.then((t) => t.split("\n").slice(-tail).join("\n"))
-						.catch(() => "")
+				files.tail(file, tail).pipe(
+					Effect.catchTag("ArtifactNotFoundError", () => Effect.succeed("")),
+					Effect.mapError(control("logs"))
 				),
 			navigate: (url) =>
 				Effect.gen(function* () {
@@ -203,40 +201,17 @@ export const makeDeviceProvider = Effect.gen(function* () {
 					Effect.mapError(control("snapshot"))
 				),
 			paths: { app, artifacts },
-			putArchive: (tar, destDir) =>
-				Effect.tryPromise({
+			putArchive: (tar, destDir) => {
+				const file = join(workDir, "upload.tar")
+				return Effect.tryPromise({
 					catch: failWith("putArchive"),
-					try: async () => {
-						await mkdir(destDir, { recursive: true })
-						const r = await runShell(`tar -x -f - -C ${q(destDir)}`, {
-							cwd: destDir,
-							env: process.env,
-							input: tar,
-							maxBytes: 100_000,
-							timeoutMs: 300_000,
-						})
-						if (r.code !== 0) {
-							throw new Error(r.stderr || `tar exited ${r.code}`)
-						}
-					},
-				}),
+					try: () => mkdir(destDir, { recursive: true }).then(() => writeFile(file, tar)),
+				}).pipe(Effect.andThen(host.run("putArchive", `tar -x -f ${q(file)} -C ${q(destDir)}`, 300_000)), Effect.asVoid)
+			},
 			runId: spec.runId,
 			screen,
 			screenshot: (options) => shoot(options).pipe(Effect.mapError(control("screenshot"))),
-			spawn: (r) =>
-				Effect.try({
-					catch: control("spawn"),
-					try: () => {
-						const child = spawn("sh", ["-c", `{ ${r.cmd} ; } >> ${q(join(artifacts, r.log))} 2>&1`], {
-							cwd: r.cwd ?? app,
-							detached: true,
-							env: { ...env, ...r.env },
-							stdio: "ignore",
-						})
-						spawned.push(child)
-						return { pid: child.pid ?? -1 }
-					},
-				}),
+			spawn: (r) => commands.spawn(r).pipe(Effect.mapError(control("spawn"))),
 			startRecording: Effect.gen(function* () {
 				if (Option.isSome(recording)) {
 					return yield* new DeviceError({ message: "already recording", operation: "startRecording" })
@@ -255,5 +230,5 @@ export const makeDeviceProvider = Effect.gen(function* () {
 		return computer
 	})
 
-	return ComputerProvider.of({ cleanupOrphans, create })
+	return { cleanupOrphans, create }
 })

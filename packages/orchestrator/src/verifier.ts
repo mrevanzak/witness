@@ -9,6 +9,7 @@
 // counts. Anything that stops a side before its verdict leaves a blocked verdict.
 
 import { homedir } from "node:os"
+import { isAbsolute, resolve } from "node:path"
 import { type Computer, ComputerProvider } from "@witness/computer"
 import {
 	type AgentPlan,
@@ -16,6 +17,7 @@ import {
 	BlockedVerdict,
 	type Criterion,
 	configSecrets,
+	type DeviceConfig,
 	type EvidenceStates,
 	exitCodeOf,
 	messageOf,
@@ -126,8 +128,38 @@ const blockedOutcome = (reason: string, message: string, logTail = "") =>
 		return yield* outcome({ _tag: "Blocked", blocked })
 	})
 
+const HOME_PREFIX = /^~(?=\/)/
+
+/**
+ * The device as a run uses it: the app as an absolute host path (`~/` expanded, or
+ * relative to `configDir`, the folder of a config passed with --config; a repo's
+ * witness.yaml must name it absolutely), plus the `services` this change needs.
+ */
+export const runDevice = (device: DeviceConfig, configDir: Option.Option<string>, services: readonly string[]) => {
+	const app = device.app.replace(HOME_PREFIX, homedir())
+	return Option.isNone(configDir) && !isAbsolute(app)
+		? Effect.fail(
+				new ConfigUnusable({
+					message: "device.app must be an absolute path in a repo's witness.yaml",
+					reason: "invalid_witness_yaml",
+				})
+			)
+		: Effect.succeed({
+				...device,
+				app: resolve(
+					Option.getOrElse(configDir, () => "/"),
+					app
+				),
+				services: [...new Set([...device.services, ...services])],
+			} satisfies DeviceConfig)
+}
+
 /** witness.yaml (repo or verifier-side), with verifier-side staged files and secret env. */
-const loadConfig = Effect.fnUntraced(function* (configPath: Option.Option<string>, repo: RepoRef) {
+const loadConfig = Effect.fnUntraced(function* (
+	configPath: Option.Option<string>,
+	repo: RepoRef,
+	services: readonly string[]
+) {
 	const fs = yield* FileSystem.FileSystem
 	const path = yield* Path.Path
 	const run = yield* CurrentRun
@@ -156,24 +188,10 @@ const loadConfig = Effect.fnUntraced(function* (configPath: Option.Option<string
 	}
 	const parsedFile = yield* parseWitnessConfig(text.value).pipe(Effect.mapError(invalid))
 	yield* run.addSecrets(configSecrets(parsedFile))
-	// The device app is a host path: absolute, `~/`, or relative to a config passed with --config.
-	const deviceApp = Option.map(parsedFile.device, (d) => d.app.replace(/^~(?=\/)/, homedir()))
-	if (Option.isSome(deviceApp) && Option.isNone(configPath) && !path.isAbsolute(deviceApp.value)) {
-		return yield* invalid({ message: "device.app must be an absolute path in a repo's witness.yaml" })
-	}
+	const configDir = Option.map(configPath, (p) => path.dirname(path.resolve(p)))
 	const parsed: WitnessConfig = {
 		...parsedFile,
-		device: Option.map(parsedFile.device, (d) => ({
-			...d,
-			app: Option.match(configPath, {
-				onNone: () => Option.getOrElse(deviceApp, () => d.app),
-				onSome: (p) =>
-					path.resolve(
-						path.dirname(path.resolve(p)),
-						Option.getOrElse(deviceApp, () => d.app)
-					),
-			}),
-		})),
+		device: yield* Effect.transposeOption(Option.map(parsedFile.device, (d) => runDevice(d, configDir, services))),
 	}
 
 	// Host files and secret env only from a verifier-side config, never from the repo under test.
@@ -322,9 +340,6 @@ const recordMode = (computer: Computer, side: Side, mode: Exclude<Prepared, { _t
 		}
 	})
 
-/** What stays on when a device is slimmed: push and universal links on iOS, location on Android. */
-const DEFAULT_SERVICES = { android: ["location"], ios: ["store", "web"] } as const
-
 const firstLine = (s: string) => s.split("\n")[0] ?? ""
 const scripted = (run: ModeRun, modelId: string): Judged => ({
 	modelId,
@@ -347,10 +362,7 @@ const runSide = (opts: VerifyOptions, side: Side) =>
 
 		return yield* Effect.scoped(
 			Effect.gen(function* () {
-				const device = Option.map(side.config.device, (d) => ({
-					...d,
-					services: [...new Set([...(d.services ?? DEFAULT_SERVICES[d.platform]), ...(opts.services ?? [])])],
-				}))
+				const { device } = side.config
 				const computer = yield* provider.create({
 					artifactsDir: run.computerDir,
 					cpus: opts.cpus,
@@ -486,7 +498,7 @@ export const verify = Effect.fn("verify")(function* (opts: VerifyOptions) {
 		[git.diff(repo), git.changedFiles(repo), git.showFile(repo, "README.md")],
 		{ concurrency: "unbounded" }
 	)
-	const loaded = yield* loadConfig(opts.configPath, repo).pipe(Effect.result)
+	const loaded = yield* loadConfig(opts.configPath, repo, opts.services ?? []).pipe(Effect.result)
 	yield* writeRunInfo(
 		opts.task,
 		repo,

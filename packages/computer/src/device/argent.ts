@@ -17,6 +17,17 @@ type ArgentClient = {
 	callTool: (name: string, args: Record<string, unknown>) => Promise<{ readonly data: unknown }>
 }
 
+/** A busy emulator drops off adb for a moment; the next try reaches it. */
+const OFFLINE = /device offline|device '.*' not found/
+/**
+ * Tools that only look, or open a link, so a second try does no harm. A tap, swipe or
+ * keystroke may have landed before the connection dropped; repeating it would act twice.
+ */
+const RETRY_SAFE = new Set(["await-screen-idle", "describe", "open-url", "screenshot"])
+
+/** Whether a failed `tool` call is tried again: only a look, after the device dropped off for a moment. */
+export const retriable = (tool: string, message: string) => RETRY_SAFE.has(tool) && OFFLINE.test(message)
+
 const PACKAGE = "@swmansion/argent"
 const INSTALL = "install argent (`npm install -g @swmansion/argent`), then run the device app again"
 
@@ -54,11 +65,10 @@ export const loadArgent = Effect.tryPromise({
 					catch: (e) => new DeviceError({ message: messageOf(e), operation: tool }),
 					try: () => client.callTool(tool, args).then((r) => r.data as T),
 				}).pipe(
-					// A busy emulator drops off adb for a moment ("device offline"); the next try reaches it.
 					Effect.retry({
 						schedule: Schedule.spaced("1 second"),
 						times: 3,
-						while: (e) => /device offline|device '.*' not found/.test(e.message),
+						while: (e) => retriable(tool, e.message),
 					})
 				),
 		})

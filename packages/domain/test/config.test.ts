@@ -131,12 +131,12 @@ url: exp+my-app://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8099
 `
 
 describe("parseWitnessConfig with a device app", () => {
-	it.effect("decodes the device and its deep link", () =>
+	it.effect("decodes the device, with the platform's default services, and its deep link", () =>
 		Effect.gen(function* () {
 			const c = yield* parseWitnessConfig(DEVICE)
 			assert.deepStrictEqual(
 				c.device,
-				Option.some({ app: "./App.app", platform: "ios" as const, type: "iPhone 17 Pro" })
+				Option.some({ app: "./App.app", platform: "ios" as const, services: ["store", "web"], type: "iPhone 17 Pro" })
 			)
 			assert.match(c.url, /^exp\+my-app:/)
 		})
@@ -158,8 +158,8 @@ describe("parseWitnessConfig with a device app", () => {
 				DEVICE.replace("platform: ios, app: ./App.app", "platform: android, app: ./app.apk")
 			)
 			assert.deepStrictEqual(
-				Option.map(c.device, (d) => [d.platform, d.app]),
-				Option.some(["android", "./app.apk"])
+				Option.map(c.device, (d) => [d.platform, d.app, d.services]),
+				Option.some(["android", "./app.apk", ["location"]])
 			)
 		})
 	)
