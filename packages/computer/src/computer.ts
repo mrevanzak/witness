@@ -1,8 +1,9 @@
 // The computer abstraction. One verification run = one fresh Computer whose
 // lifetime is a Scope: leaving the scope tears down the container, its sibling
-// services and its network. Docker is the MVP backend.
+// services and its network (Docker), or the simulator and the processes the run
+// started on the host (a device app).
 
-import type { ServiceSpec } from "@witness/domain"
+import type { DeviceConfig, ServiceSpec } from "@witness/domain"
 import type { Effect, Scope } from "effect"
 import { Context, Schema } from "effect"
 import type { ControlClient } from "./control-client.ts"
@@ -16,6 +17,12 @@ export class ControlError extends Schema.TaggedError<ControlError>()("ControlErr
 
 /** A Docker API call failed while creating, inspecting or removing run resources. */
 export class DockerError extends Schema.TaggedError<DockerError>()("DockerError", {
+	message: Schema.String,
+	operation: Schema.String,
+}) {}
+
+/** Creating, driving or deleting the simulator of a device run failed. */
+export class DeviceError extends Schema.TaggedError<DeviceError>()("DeviceError", {
 	message: Schema.String,
 	operation: Schema.String,
 }) {}
@@ -42,6 +49,8 @@ export type ComputerSpec = {
 	/** Host directory bind-mounted at /artifacts. */
 	readonly artifactsDir: string
 	readonly cpus?: number
+	/** A simulator for a device app instead of the Linux computer (`services`: the simslim categories it keeps). */
+	readonly device?: DeviceConfig & { readonly services: readonly string[] }
 	readonly enableVnc?: boolean
 	/** Leave the computer running when the scope closes. */
 	readonly keep?: boolean
@@ -52,15 +61,21 @@ export type ComputerSpec = {
 /** What the provider adds around the control client: the container and its network. */
 export type ComputerHandle = {
 	readonly id: string
+	/** What the tester looks at: a Linux desktop with Chromium, or a phone simulator. */
+	readonly kind: "desktop" | "phone"
 	/** Host URL of the noVNC live view, when enabled. */
 	readonly liveView: string | undefined
 	/** Network the computer and its services share. */
 	readonly network: string
+	/** Where commands see the app's source and the run's artifacts (logs go under `artifacts`). */
+	readonly paths: { readonly app: string; readonly artifacts: string }
 	/** Extracts a tar archive into `destDir` (entries keep the tar's ownership). */
-	putArchive: (tar: Uint8Array, destDir: string) => Effect.Effect<void, DockerError>
+	putArchive: (tar: Uint8Array, destDir: string) => Effect.Effect<void, DockerError | DeviceError>
 	readonly runId: string
+	/** Screen size in pixels; action coordinates and full screenshots use it. */
+	readonly screen: { readonly width: number; readonly height: number }
 	/** Starts a sibling service container on the run network, reachable at `name`. */
-	startService: (name: string, spec: ServiceSpec) => Effect.Effect<void, DockerError>
+	startService: (name: string, spec: ServiceSpec) => Effect.Effect<void, DockerError | DeviceError>
 }
 
 export type Computer = ControlClient & ComputerHandle
@@ -71,8 +86,12 @@ export class ComputerProvider extends Context.Service<
 		/** A fresh computer, destroyed when the surrounding scope closes (unless `keep`). */
 		create: (
 			spec: ComputerSpec
-		) => Effect.Effect<Computer, DockerError | ComputerImageMissingError | ComputerStartTimeoutError, Scope.Scope>
+		) => Effect.Effect<
+			Computer,
+			DockerError | DeviceError | ComputerImageMissingError | ComputerStartTimeoutError,
+			Scope.Scope
+		>
 		/** Removes computers and networks whose witness process has exited; returns how many runs it cleaned. */
-		readonly cleanupOrphans: Effect.Effect<number, DockerError>
+		readonly cleanupOrphans: Effect.Effect<number, DockerError | DeviceError>
 	}
 >()("witness/computer/ComputerProvider") {}

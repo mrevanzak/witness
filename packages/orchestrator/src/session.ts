@@ -8,8 +8,8 @@ import type { ModeRun } from "./criteria.ts"
 import { CurrentRun } from "./current-run.ts"
 import { type ActionFailed, makeRecorder, Recorder } from "./recorder.ts"
 
-/** Screenshots a session's driver sees are this wide; its coordinates are in these pixels. */
-export const SESSION_SHOT_WIDTH = 1280
+/** The longer side of the screenshots a session's driver sees; its coordinates are in these pixels. */
+export const SESSION_SHOT_SIDE = 1280
 
 /** Which commit a session is on, and the criteria it starts with. */
 export type SessionSide = {
@@ -35,7 +35,7 @@ export const runSession = Effect.fn("runSession")(function* (
 	for (const c of side.carried) {
 		yield* run.log("criterion.declared", { description: c.description, id: c.id, kind: c.kind })
 	}
-	const recorder = yield* makeRecorder(computer, config, side.carried, SESSION_SHOT_WIDTH)
+	const recorder = yield* makeRecorder(computer, config, side.carried, SESSION_SHOT_SIDE)
 	const outcome = yield* program(side).pipe(Effect.provideService(Recorder, recorder), Effect.result)
 	const error =
 		outcome._tag === "Failure"

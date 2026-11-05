@@ -147,6 +147,29 @@ animation: false                           # default true: zoom on each action, 
 
 A config kept outside the repo can also copy files from your machine into the app (`files`) and load secret env from a file (`secret_env`). Witness redacts those values from every log, step, transcript and report. A `witness.yaml` inside the repo under test can do neither.
 
+### Mobile apps (iOS simulator)
+
+With a `device` key, a run uses a fresh iOS simulator on your Mac instead of the Linux computer. Witness creates the simulator, installs your app on it, runs `setup` and `start` on the Mac in a temporary copy of the commit, opens `url` (a deep link) on the simulator, and deletes everything when the run ends. It needs macOS with Xcode, and [argent](https://github.com/software-mansion/argent) on your PATH, which drives the simulator. With [simslim](https://github.com/MobAI-App/simslim) on your PATH too, the simulator boots without the background services a test run doesn't need (about a third of the memory); push notifications and universal links stay on. List what else your app needs in `device.services` (simslim category IDs, e.g. `[store, web, photos]`), and add what one change needs with `witness run --services photos`.
+
+The app is a build you made once. A development build that loads its JavaScript from a dev server (Expo dev client, React Native debug build) checks any change that touches only JavaScript. A change to native code needs a new build first.
+
+```yaml
+device:
+  platform: ios
+  app: ./MyApp.app            # a simulator build; relative to this file, or absolute
+  type: iPhone 17 Pro         # optional; default: the newest iPhone of the newest runtime
+  runtime: iOS 26.5           # optional
+  services: [store, web, photos]   # optional, with simslim: categories kept running (default store, web)
+setup:
+  - npm ci
+start: npx expo start --dev-client --port 8099
+health: http://127.0.0.1:8099/status      # required: the dev server's health URL
+url: exp+my-app://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8099
+env: { CI: "1" }
+```
+
+`setup` and `start` get `WITNESS_DEVICE_ID`, the simulator's UDID, for things like `xcrun simctl spawn "$WITNESS_DEVICE_ID" defaults write <bundle id> <key> ...`. Run the session as usual: a tap is `click`, a long press `right_click`, a swipe `drag`, and `scroll` swipes the content. Not yet: Android, physical phones, `services`, walkthroughs, `eval`, console capture, the live view, and `--parallel` (the commits share the dev server's port, so they run in order).
+
 ## The CLI
 
 The skill drives the `witness` CLI, and you can run it yourself too, from scripts and CI. `witness --help` lists every command.
@@ -214,7 +237,7 @@ To work on Witness itself, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Early. The pipeline is tested end to end with a scripted model and with walkthroughs, on the demo app and on a real Next.js + Strapi + Supabase monorepo. The live acceptance run with the real model (4 of 5 correct verdicts per fixture branch) hasn't been run yet. Treat independent-mode verdicts as a second opinion until it has.
 
-Only web apps for now. Mobile apps and non-Linux guests are out of scope.
+Web apps, and iOS apps on a simulator (see [Mobile apps](#mobile-apps-ios-simulator)). Android, physical phones and non-Linux desktop guests are not supported yet.
 
 ## Licenses
 

@@ -60,9 +60,39 @@ export type EvidenceStates = typeof EvidenceStates.Type
 
 const Seconds = Schema.Finite.pipe(Schema.check(Schema.isGreaterThan(0)))
 
+/**
+ * A mobile app on a simulator instead of a web app in the Linux computer. Each
+ * run creates a fresh simulator, installs `app` on it and deletes it afterwards.
+ */
+export const DeviceConfig = Schema.Struct({
+	/** The built app to install (an iOS simulator `.app`), e.g. a development build that loads JS from `start`. */
+	app: NonEmpty,
+	platform: Schema.Literal("ios"),
+	/** Simulator runtime, e.g. `iOS 26.5`; defaults to the newest installed. */
+	runtime: Schema.optionalKey(NonEmpty),
+	/**
+	 * simslim categories the app needs left running (`simslim profiles` lists them),
+	 * when simslim is installed. Default: `store` (push, StoreKit) and `web` (universal links).
+	 */
+	services: Schema.optionalKey(Schema.Array(NonEmpty)),
+	/** Device type, e.g. `iPhone 17 Pro`; defaults to the runtime's newest iPhone. */
+	type: Schema.optionalKey(NonEmpty),
+})
+export type DeviceConfig = typeof DeviceConfig.Type
+
+/** Any absolute URL: http(s) for a web app, or a deep link (`myapp://...`) that opens the device app. */
+const AppUrl = Schema.String.pipe(
+	Schema.check(
+		Schema.isPattern(/^[a-z][a-z0-9+.-]*:\/\/\S+$/i, {
+			message: "must be an absolute http(s) URL, or a deep link for a device app",
+		})
+	)
+)
+
 /** The file shape (snake_case keys, as written in YAML). */
 const ConfigFile = Schema.Struct({
 	animation: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(true))),
+	device: Schema.optionalKey(DeviceConfig),
 	env: EnvMap.pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
 	evidence: Schema.optionalKey(EvidenceDestination),
 	files: Schema.Record(Schema.String, NonEmpty)
@@ -85,8 +115,28 @@ const ConfigFile = Schema.Struct({
 		boot: Seconds.pipe(Schema.withDecodingDefaultKey(Effect.succeed(180))),
 		setup: Seconds.pipe(Schema.withDecodingDefaultKey(Effect.succeed(900))),
 	}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
-	url: HttpUrl,
-})
+	url: AppUrl,
+}).check(
+	Schema.makeFilter((f) => {
+		if (f.device === undefined) {
+			return /^https?:\/\/[^\s/]+/.test(f.url)
+				? undefined
+				: { issue: "must be an absolute http(s) URL (only a device app opens a deep link)", path: ["url"] }
+		}
+		if (f.health === undefined) {
+			return {
+				issue: "a device app needs `health`: an http URL that answers once `start` is serving",
+				path: ["health"],
+			}
+		}
+		return Object.keys(f.services).length
+			? {
+					issue: "services are not supported with a device app yet; run them from `setup` or `start`",
+					path: ["services"],
+				}
+			: undefined
+	})
+)
 
 /** witness.yaml as written (before defaults), e.g. for drafting one. */
 export type WitnessConfigFile = typeof ConfigFile.Encoded
@@ -95,6 +145,8 @@ export type WitnessConfigFile = typeof ConfigFile.Encoded
 export const WitnessConfig = Schema.Struct({
 	/** Zoom, pan, cursor and click ripples in the polished video. */
 	animation: Schema.Boolean,
+	/** The simulator app under test; none for a web app. */
+	device: Schema.Option(Schema.toType(DeviceConfig)),
 	/** Env for setup/start (secret env is merged in by the orchestrator). */
 	env: Schema.Record(Schema.String, Schema.String),
 	evidence: Schema.Option(EvidenceDestination),
@@ -133,6 +185,7 @@ const ConfigFromFile = ConfigFile.pipe(
 		SchemaTransformation.transform({
 			decode: (f) => ({
 				animation: f.animation,
+				device: Option.fromUndefinedOr(f.device),
 				env: f.env,
 				evidence: Option.fromUndefinedOr(f.evidence),
 				files: f.files,
@@ -160,6 +213,7 @@ const ConfigFromFile = ConfigFile.pipe(
 				timeouts: { boot: c.timeouts.bootSec, setup: c.timeouts.setupSec },
 				...Option.match(c.secretEnv, { onNone: () => ({}), onSome: (secret_env) => ({ secret_env }) }),
 				...Option.match(c.evidence, { onNone: () => ({}), onSome: (evidence) => ({ evidence }) }),
+				...Option.match(c.device, { onNone: () => ({}), onSome: (device) => ({ device }) }),
 			}),
 		})
 	)

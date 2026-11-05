@@ -89,13 +89,36 @@ const probeDuration = Effect.fnUntraced(function* (file: string) {
 	return Number.parseFloat(out.trim())
 })
 
+/** The recording's frame size: the computer's screen (a desktop, or a phone standing upright). */
+const probeSize = Effect.fnUntraced(function* (file: string) {
+	const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+	const out = yield* spawner
+		.string(
+			ChildProcess.make("ffprobe", [
+				"-v",
+				"error",
+				"-select_streams",
+				"v:0",
+				"-show_entries",
+				"stream=width,height",
+				"-of",
+				"csv=p=0",
+				file,
+			])
+		)
+		.pipe(Effect.mapError(failed("ffprobe")))
+	const [w, h] = out.trim().split(",").map(Number)
+	return w && h ? { h, w } : undefined
+})
+
 /** The composition's props for a finished run (pure timeline math over its decoded artifacts). */
 const propsForRun = Effect.fnUntraced(function* (
 	runDir: string,
 	sourceDuration: number,
 	settings: RenderSettings,
 	label: string | undefined,
-	info: Option.Option<RunInfo>
+	info: Option.Option<RunInfo>,
+	screen: { readonly w: number; readonly h: number } | undefined
 ) {
 	const steps = yield* readSteps(runDir).pipe(Effect.mapError(failed(RUN_FILES.steps)))
 	const verdict = yield* requireRunFile(runDir, RUN_FILES.verdict, Verdict).pipe(
@@ -108,7 +131,11 @@ const propsForRun = Effect.fnUntraced(function* (
 			sha: Option.match(info, { onNone: () => "", onSome: (i) => i.sha.slice(0, 7) }),
 			...(label ? { label } : {}),
 		},
-		options: { animate: settings.animate, endCardSec: LAYOUTS[settings.layout].endCardSec },
+		options: {
+			animate: settings.animate,
+			endCardSec: LAYOUTS[settings.layout].endCardSec,
+			...(screen ? { screen } : {}),
+		},
 		overall: verdict.overall,
 		sourceDuration,
 		steps: steps.flatMap((s) => (s.t === undefined ? [] : [{ ...s, t: s.t }])),
@@ -172,7 +199,14 @@ export const renderRun = Effect.fn("renderRun")(function* (
 		layout: opts.layout ?? defaults?.evidence ?? "pr",
 	}
 	const spec = LAYOUTS[settings.layout]
-	const { props, seek } = yield* propsForRun(runDir, yield* probeDuration(raw), settings, opts.label, info)
+	const { props, seek } = yield* propsForRun(
+		runDir,
+		yield* probeDuration(raw),
+		settings,
+		opts.label,
+		info,
+		yield* probeSize(raw)
+	)
 	const { timeline } = props
 
 	const outDir = path.join(runDir, "render")

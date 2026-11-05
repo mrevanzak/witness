@@ -7,7 +7,7 @@ import type { Computer, Screenshot } from "@witness/computer"
 import { Criterion, parseWitnessConfig } from "@witness/domain"
 import { Effect, Layer, Option } from "effect"
 import { CurrentRun } from "../src/current-run.ts"
-import { makeRecorder, type RecorderApi, ToolCall } from "../src/recorder.ts"
+import { makeRecorder, type RecorderApi, shotSpace, ToolCall } from "../src/recorder.ts"
 import { runLayer } from "../src/verifier.ts"
 
 const PASSWORD = "hunter22"
@@ -27,6 +27,7 @@ const fakeComputer = (navigated: string[]) =>
 		act: () => Effect.succeed(shot()),
 		consoleMessages: Effect.succeed([]),
 		evaluate: () => Effect.succeed({ token: PASSWORD }),
+		kind: "desktop",
 		logs: () => Effect.succeed(`started with ${PASSWORD}`),
 		navigate: (url: string) =>
 			Effect.sync(() => {
@@ -36,6 +37,7 @@ const fakeComputer = (navigated: string[]) =>
 		networkEvents: Effect.succeed([]),
 		pageSnapshot: () =>
 			Effect.succeed({ elements: [], text: `password: ${PASSWORD}`, title: "t", url: "http://app:3000/" }),
+		screen: { height: 1080, width: 1920 },
 		screenshot: () => Effect.succeed(shot()),
 	}) as unknown as Computer
 
@@ -123,4 +125,14 @@ describe("Recorder", () => {
 			})
 		)
 	)
+})
+
+describe("shotSpace", () => {
+	it("keeps a desktop at 1280x720 and stands a phone upright at 1280 high", () => {
+		const desktop = shotSpace({ height: 1080, width: 1920 }, 1280)
+		assert.deepStrictEqual([desktop.width, desktop.height, desktop.toScreen(640)], [1280, 720, 960])
+		const phone = shotSpace({ height: 2622, width: 1206 }, 1280)
+		assert.deepStrictEqual([phone.width, phone.height], [589, 1280])
+		assert.strictEqual(phone.toScreen(640), 1311)
+	})
 })

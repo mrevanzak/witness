@@ -7,15 +7,7 @@
 //   in typed text, and is masked in page text, logs and notes;
 // - a criterion that was never ended is ended blocked, with a screenshot.
 // Coordinates in and out are screenshot pixels (`ShotSpace`), not screen pixels.
-import {
-	type Computer,
-	type ConsoleMessage,
-	type NetworkEvent,
-	type PageElement,
-	SCREEN,
-	type Screenshot,
-	type ShotOptions,
-} from "@witness/computer"
+import type { Computer, ConsoleMessage, NetworkEvent, PageElement, Screenshot, ShotOptions } from "@witness/computer"
 import {
 	type Criterion,
 	type CriterionStatus,
@@ -34,14 +26,18 @@ import { type StepInput, Steps } from "./steps.ts"
 /** An action was refused (it broke a rule or named something unknown) or the computer could not do it. */
 export class ActionFailed extends Schema.TaggedError<ActionFailed>()("ActionFailed", { message: Schema.String }) {}
 
-/** Screenshot pixels the tester sees, mapped onto the 1920x1080 screen. */
-export const shotSpace = (width: number) => {
-	const scale = SCREEN.width / width
+/**
+ * Screenshot pixels the tester sees, mapped onto the screen: the screen scaled so
+ * its longer side is `longSide` (a 1920x1080 desktop at 1280 is 1280x720; a phone
+ * stands upright at 1280 high).
+ */
+export const shotSpace = (screen: { readonly width: number; readonly height: number }, longSide: number) => {
+	const scale = Math.max(screen.width, screen.height) / longSide
 	return {
-		height: Math.round((width * 9) / 16),
+		height: Math.round(screen.height / scale),
 		toImage: (v: number) => Math.round(v / scale),
 		toScreen: (v: number) => Math.round(v * scale),
-		width,
+		width: Math.round(screen.width / scale),
 	}
 }
 export type ShotSpace = ReturnType<typeof shotSpace>
@@ -146,6 +142,8 @@ export type Recorded = {
 
 export type RecorderApi = {
 	readonly runDir: string
+	/** The coordinate space, for the tester: "1280x720 screenshot pixels of a desktop". */
+	readonly coordinates: string
 	/** The screen when the recorder started. */
 	readonly first: Screenshot
 	readonly state: Effect.Effect<RecorderState>
@@ -162,14 +160,16 @@ export const makeRecorder = Effect.fn("makeRecorder")(function* (
 	computer: Computer,
 	config: WitnessConfig,
 	criteria: readonly Criterion[],
-	imageWidth: number
+	longSide: number
 ) {
 	const run = yield* CurrentRun
 	const steps = yield* Steps
 	const secrets = yield* run.secrets
-	const space = shotSpace(imageWidth)
-	const shot: ShotOptions = { format: "jpeg", quality: 80, width: imageWidth }
+	const space = shotSpace(computer.screen, longSide)
+	const shot: ShotOptions = { format: "jpeg", quality: 80, width: space.width }
 	const secret = Option.flatMap(config.login, (l) => Option.fromUndefinedOr(l.password))
+	// A device app opens deep links in its own scheme (and its dev server's http pages).
+	const appScheme = new URL(config.url).protocol
 	const allowedHosts = new Set([
 		new URL(config.url).hostname,
 		"localhost",
@@ -426,11 +426,11 @@ export const makeRecorder = Effect.fn("makeRecorder")(function* (
 			Navigate: ({ label, url }) =>
 				Effect.gen(function* () {
 					const target = Option.liftThrowable((u: string) => new URL(u, config.url))(url)
-					if (
-						Option.isNone(target) ||
-						!/^https?:$/.test(target.value.protocol) ||
-						!allowedHosts.has(target.value.hostname)
-					) {
+					if (Option.isNone(target)) {
+						return yield* reject(`Not a URL: ${url}`)
+					}
+					const ownLink = computer.kind === "phone" && target.value.protocol === appScheme
+					if (!(ownLink || (/^https?:$/.test(target.value.protocol) && allowedHosts.has(target.value.hostname)))) {
 						return yield* reject(`Only the app under test may be opened (${[...allowedHosts].join(", ")}).`)
 					}
 					const nav = yield* computer
@@ -556,5 +556,6 @@ export const makeRecorder = Effect.fn("makeRecorder")(function* (
 
 	// Boot noise is not blamed on the first criterion.
 	yield* drain
-	return { finish, first, perform, runDir: run.dir, state } satisfies RecorderApi
+	const coordinates = `${space.width}x${space.height} screenshot pixels of ${computer.kind === "phone" ? `a ${computer.screen.width}x${computer.screen.height} phone screen` : "a 1920x1080 desktop"}`
+	return { coordinates, finish, first, perform, runDir: run.dir, state } satisfies RecorderApi
 })

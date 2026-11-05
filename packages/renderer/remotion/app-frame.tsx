@@ -21,7 +21,8 @@ export function AppFrame({
 	video: string
 }) {
 	const { frame: box, labelScale: u } = spec
-	const base = box.w / tl.screen.w
+	// A desktop fills the frame's width; a phone stands upright, as tall as the frame.
+	const base = Math.min(box.w / tl.screen.w, box.h / tl.screen.h)
 	const z = t == null ? { cx: tl.screen.w / 2, cy: tl.screen.h / 2, scale: 1 } : zoomAt(tl.zoom, t)
 	const k = base * z.scale
 	const layer = `translate(${box.w / 2 - z.cx * k}px, ${box.h / 2 - z.cy * k}px) scale(${k})`

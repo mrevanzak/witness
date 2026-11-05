@@ -7,6 +7,8 @@
 // against the same criteria, in its own run under `<runDir>/before/`, so the report
 // can show the app before and after the change. The change's run is the one that
 // counts. Anything that stops a side before its verdict leaves a blocked verdict.
+
+import { homedir } from "node:os"
 import { type Computer, ComputerProvider } from "@witness/computer"
 import {
 	type AgentPlan,
@@ -62,6 +64,8 @@ export type VerifyOptions = {
 	readonly mode: VerifyMode
 	/** Verify the base commit and the change at the same time (agent and spec modes; sessions stay in order). */
 	readonly parallel: boolean
+	/** Device apps: simslim categories this change needs, kept on beside witness.yaml's `device.services`. */
+	readonly services?: readonly string[]
 	/** Called once the computer is up (live view). */
 	readonly onComputer?: (computer: Computer) => Effect.Effect<void>
 	readonly ref: string
@@ -150,8 +154,27 @@ const loadConfig = Effect.fnUntraced(function* (configPath: Option.Option<string
 			reason: "no_witness_yaml",
 		})
 	}
-	const parsed = yield* parseWitnessConfig(text.value).pipe(Effect.mapError(invalid))
-	yield* run.addSecrets(configSecrets(parsed))
+	const parsedFile = yield* parseWitnessConfig(text.value).pipe(Effect.mapError(invalid))
+	yield* run.addSecrets(configSecrets(parsedFile))
+	// The device app is a host path: absolute, `~/`, or relative to a config passed with --config.
+	const deviceApp = Option.map(parsedFile.device, (d) => d.app.replace(/^~(?=\/)/, homedir()))
+	if (Option.isSome(deviceApp) && Option.isNone(configPath) && !path.isAbsolute(deviceApp.value)) {
+		return yield* invalid({ message: "device.app must be an absolute path in a repo's witness.yaml" })
+	}
+	const parsed: WitnessConfig = {
+		...parsedFile,
+		device: Option.map(parsedFile.device, (d) => ({
+			...d,
+			app: Option.match(configPath, {
+				onNone: () => Option.getOrElse(deviceApp, () => d.app),
+				onSome: (p) =>
+					path.resolve(
+						path.dirname(path.resolve(p)),
+						Option.getOrElse(deviceApp, () => d.app)
+					),
+			}),
+		})),
+	}
 
 	// Host files and secret env only from a verifier-side config, never from the repo under test.
 	if (Option.isNone(configPath)) {
@@ -321,9 +344,14 @@ const runSide = (opts: VerifyOptions, side: Side) =>
 
 		return yield* Effect.scoped(
 			Effect.gen(function* () {
+				const device = Option.map(side.config.device, (d) => ({
+					...d,
+					services: [...new Set([...(d.services ?? ["store", "web"]), ...(opts.services ?? [])])],
+				}))
 				const computer = yield* provider.create({
 					artifactsDir: run.computerDir,
 					cpus: opts.cpus,
+					...Option.match(device, { onNone: () => ({}), onSome: (d) => ({ device: d }) }),
 					enableVnc: opts.enableVnc,
 					keep: side.keep,
 					memoryGb: opts.memoryGb,
@@ -333,6 +361,7 @@ const runSide = (opts: VerifyOptions, side: Side) =>
 					id: computer.id.slice(0, 12),
 					liveView: computer.liveView,
 					network: computer.network,
+					...Option.match(device, { onNone: () => ({}), onSome: (d) => ({ services: d.services }) }),
 				})
 				if (opts.onComputer) {
 					yield* opts.onComputer(computer)
@@ -465,6 +494,14 @@ export const verify = Effect.fn("verify")(function* (opts: VerifyOptions) {
 		return single(yield* blockedOutcome(loaded.failure.reason, loaded.failure.message))
 	}
 	const { config, staged } = loaded.success
+	if (Option.isSome(config.device) && opts.mode._tag === "Spec") {
+		return single(
+			yield* blockedOutcome(
+				"mode_unsupported",
+				"Playwright walkthroughs drive a browser; check a device app in a session (`run --session`)"
+			)
+		)
+	}
 	const change: Change = { configText: loaded.success.text, diff, files, readme, repo, task: opts.task }
 
 	const prepare = yield* preparer(opts.mode, change, config).pipe(Effect.result)
@@ -504,7 +541,8 @@ export const verify = Effect.fn("verify")(function* (opts: VerifyOptions) {
 	const after = (carried: readonly Criterion[]) => runSide(opts, side(Option.some("after"), carried))
 
 	// Specs and the agent bring their own criteria, so both commits can run at once.
-	if (opts.parallel && mode._tag !== "Session") {
+	// A device app's commits share the dev server's port, so they run in order.
+	if (opts.parallel && mode._tag !== "Session" && Option.isNone(config.device)) {
 		yield* run.log("before.parallel", { sha: baseSha.value })
 		const [b, a] = yield* Effect.all([before(false), after([])], { concurrency: 2 })
 		return { ...a, before: b }

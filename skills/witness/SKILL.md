@@ -29,6 +29,23 @@ git -C <repo> rev-parse HEAD                                                    
 
 Heavy stacks (Next + CMS builds) need `--memory-gb 9 --cpus 6`.
 
+**A mobile app** (React Native, Expo, native iOS) runs on a fresh iOS simulator instead: the config gets a `device` key with a simulator build of the app (`.app`), and `url` is a deep link that opens the app on its dev server (README, "Mobile apps"). The build only covers changes to JavaScript; if the change touches native code (`ios/`, native dependencies, the React Native version), say the build must be rebuilt first and stop. On a phone, `click` taps, `right_click` long-presses, `drag` swipes, `scroll <dy>` swipes the content, and `key` takes `Return`, `BackSpace`, `Escape`, `Tab` or `home`. No live view, no walkthroughs, no `eval`.
+
+When simslim is installed, the simulator boots without the background services a test run doesn't need. `device.services` in the config lists what the app always needs (default `store,web`). Before the run, read the diff for system features the change touches, and keep their categories on with `--services`:
+
+| The change uses | `--services` |
+|---|---|
+| Push notifications, in-app purchases | `store` (on by default) |
+| Universal links, Safari | `web` (on by default) |
+| Photo picker, photo library, saving images | `photos` |
+| Contacts, calendar, reminders, mail | `pim` |
+| iCloud, Sign in with Apple, keychain sync | `icloud` |
+| HealthKit, HomeKit | `health` |
+| Spotlight, Siri, dictation, speech | `search`, `siri` |
+| Wallet, App Clips, Apple Pay | `other` |
+
+Location, the share sheet and the rest of the core stay on regardless; `simslim profiles <id>` lists a category's services. If a feature fails in a way that looks like a missing system service, rerun with its category kept on before calling it a fail, and say in a note which categories the run kept.
+
 Runs check the base commit first and then the change (`states: before-after`, the default), so the evidence shows the app before and after. The base commit's run is `<runDir>/before/`. Pass `--states after` to check only the change, for example on a boot check or when the user asks for it; `states: after` in the config makes that the default. Walkthrough and independent runs take `--parallel` to check both commits at once (about half the time, twice the memory); add it when the user asks for speed and the machine has room. Sessions always go in order.
 
 Runs open a live view by default (the desktop, criteria and steps in the browser), so the user can watch you work. Its **Take over** button hands the user the computer's mouse and keyboard until they press **Hand back**. Pass `--no-live` for boot checks and other runs nobody needs to watch.

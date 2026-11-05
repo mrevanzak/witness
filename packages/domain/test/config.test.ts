@@ -122,6 +122,47 @@ describe("parseWitnessConfig", () => {
 	)
 })
 
+const DEVICE = `
+device: { platform: ios, app: ./App.app, type: iPhone 17 Pro }
+setup: npm ci
+start: npx expo start --dev-client --port 8099
+health: http://127.0.0.1:8099/status
+url: exp+my-app://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8099
+`
+
+describe("parseWitnessConfig with a device app", () => {
+	it.effect("decodes the device and its deep link", () =>
+		Effect.gen(function* () {
+			const c = yield* parseWitnessConfig(DEVICE)
+			assert.deepStrictEqual(
+				c.device,
+				Option.some({ app: "./App.app", platform: "ios" as const, type: "iPhone 17 Pro" })
+			)
+			assert.match(c.url, /^exp\+my-app:/)
+		})
+	)
+	it.effect("takes the simslim categories the app keeps", () =>
+		Effect.gen(function* () {
+			const c = yield* parseWitnessConfig(
+				DEVICE.replace("type: iPhone 17 Pro }", "type: iPhone 17 Pro, services: [store, photos] }")
+			)
+			assert.deepStrictEqual(
+				Option.map(c.device, (d) => d.services),
+				Option.some(["store", "photos"])
+			)
+		})
+	)
+	it.effect("refuses a deep link without a device", () =>
+		failsWith(DEVICE.replace(/^device:.*$/m, ""), "ConfigInvalidError", /absolute http\(s\) URL/)
+	)
+	it.effect("needs a health URL, since a deep link cannot be probed", () =>
+		failsWith(DEVICE.replace(/^health:.*$/m, ""), "ConfigInvalidError", /needs `health`/)
+	)
+	it.effect("refuses services", () =>
+		failsWith(`${DEVICE}services: { db: { image: postgres:16 } }\n`, "ConfigInvalidError", /services are not supported/)
+	)
+})
+
 describe("parseEnvFile", () => {
 	it("reads quoted values, comments and export prefixes", () => {
 		assert.deepStrictEqual(parseEnvFile("# c\nexport A=\"1\"\nB=two\n\nC='x=y'\nbad line\n"), {

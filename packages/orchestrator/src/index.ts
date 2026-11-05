@@ -16,7 +16,7 @@ export {
 export { PlanInvalid } from "./planner.ts"
 export { SpecFailed, type SpecOptions } from "./playwright-spec.ts"
 export { ActionFailed, Recorder, type RecorderApi, type ShotSpace, ToolCall } from "./recorder.ts"
-export { SESSION_SHOT_WIDTH, type SessionProgram, type SessionSide } from "./session.ts"
+export { SESSION_SHOT_SIDE, type SessionProgram, type SessionSide } from "./session.ts"
 export {
 	exitCodeOfResult,
 	modelFor,

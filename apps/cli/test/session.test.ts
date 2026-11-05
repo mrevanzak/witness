@@ -13,6 +13,7 @@ import { act, sessionHost } from "../src/session.ts"
 /** A recorder that answers every call with its tag, and remembers the calls. */
 const stubRecorder = (runDir: string, calls: ToolCall[]) =>
 	({
+		coordinates: "1280x720 screenshot pixels of a 1920x1080 desktop",
 		perform: (call: ToolCall) =>
 			Effect.sync(() => {
 				calls.push(call)
