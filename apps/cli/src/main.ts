@@ -82,7 +82,7 @@ const runFlags = {
 	runsDir: runsDirFlag,
 	services: Flag.String("services").pipe(
 		Flag.withDescription(
-			"Device apps: simslim categories this change needs kept running, comma-separated (e.g. photos,pim), on top of witness.yaml `device.services`"
+			"Device apps: what this change needs kept running when the device is slimmed, comma-separated: simslim categories on iOS (e.g. photos,pim), avdslim groups on Android; on top of witness.yaml `device.services`"
 		),
 		Flag.optional
 	),

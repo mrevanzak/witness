@@ -61,8 +61,8 @@ export type EvidenceStates = typeof EvidenceStates.Type
 const Seconds = Schema.Finite.pipe(Schema.check(Schema.isGreaterThan(0)))
 
 /**
- * A mobile app on a simulator instead of a web app in the Linux computer. Each
- * run creates a fresh simulator, installs `app` on it and deletes it afterwards.
+ * A mobile app on a simulator or emulator instead of a web app in the Linux computer.
+ * Each run creates a fresh device, installs `app` on it and deletes it afterwards.
  */
 const DeviceFile = Schema.Struct({
 	/**
@@ -158,7 +158,7 @@ export type WitnessConfigFile = typeof ConfigFile.Encoded
 export const WitnessConfig = Schema.Struct({
 	/** Zoom, pan, cursor and click ripples in the polished video. */
 	animation: Schema.Boolean,
-	/** The simulator app under test; none for a web app. */
+	/** The device app under test; none for a web app. */
 	device: Schema.Option(Schema.toType(DeviceConfig)),
 	/** Env for setup/start (secret env is merged in by the orchestrator). */
 	env: Schema.Record(Schema.String, Schema.String),

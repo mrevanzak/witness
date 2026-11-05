@@ -1,6 +1,6 @@
 // Boots the app under test inside a computer: source -> services -> setup ->
 // start (stdout/stderr -> app.log in the artifacts) -> health -> Chromium on the
-// URL (or, for a device app, the simulator on its deep link).
+// URL (or, for a device app, the simulator or emulator on its deep link).
 // A boot failure is a typed AppBootFailed with the log tail; the verifier turns it
 // into a `blocked` verdict rather than a crash.
 import type { Computer } from "@witness/computer"

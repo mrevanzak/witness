@@ -185,13 +185,17 @@ const TOOLS: Record<string, AgentTool> = Object.fromEntries(
 	].map((t) => [t.definition.name, t])
 )
 
-/** The tools the model is offered. */
-export const buildTools = (hasSecret: boolean): readonly Tool[] =>
+/** What only a browser captures; a device app has no console or request log to read. */
+const BROWSER_ONLY = new Set(["console_logs", "network_errors"])
+
+/** The tools the model is offered: type_secret with a password, the browser's logs on a desktop. */
+export const buildTools = (hasSecret: boolean, kind: Computer["kind"]): readonly Tool[] =>
 	Object.values(TOOLS)
 		.filter((t) => hasSecret || !t.needsSecret)
+		.filter((t) => kind === "desktop" || !BROWSER_ONLY.has(t.definition.name))
 		.map((t) => t.definition)
 
-const SYSTEM = `You are an independent QA tester verifying a code change in a running web app. You use the app like a person: you look at screenshots and use the mouse and keyboard. You never edit code and you cannot run commands. You do not trust anyone's claim that the change works; you only report what you observe.
+const SYSTEM = `You are an independent QA tester verifying a code change in a running app. You use the app like a person: you look at screenshots and use the mouse and keyboard. You never edit code and you cannot run commands. You do not trust anyone's claim that the change works; you only report what you observe.
 
 {SCREEN}
 
@@ -200,7 +204,7 @@ How to work:
 - pass only when you saw the expected evidence. fail when the app behaves wrongly; describe exactly what you saw. blocked when you could not check it (say why). Never pass a criterion you did not observe.
 - Prefer page_snapshot then click_element to hit exact targets; use click with coordinates for things the snapshot does not list. Take a screenshot after actions when unsure what happened.
 - Give every action a short, human caption (label). Never put a password or other secret in a label or in typed text; use type_secret for the test account's password.
-- Use console_logs / network_errors / app_logs when behaviour looks wrong or the plan asks for it.
+- Use app_logs (and console_logs / network_errors, where offered) when behaviour looks wrong or the plan asks for it.
 - Stay on the app under test. Be efficient: a criterion usually needs 3 to 12 actions.
 - When every criterion is ended, reply with a two-sentence summary and no tool calls.
 
@@ -303,7 +307,7 @@ export const execute = Effect.fn("execute")(function* (
 			role: "user",
 		},
 	]
-	const tools = buildTools(hasSecret)
+	const tools = buildTools(hasSecret, computer.kind)
 
 	let stoppedBecause: StoppedBecause = "done"
 	let summary = ""

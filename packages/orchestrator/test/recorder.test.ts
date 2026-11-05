@@ -22,12 +22,12 @@ const shot = (): Screenshot => ({
 })
 
 // Only what the recorder calls; nothing else of the computer is reached.
-const fakeComputer = (navigated: string[]) =>
+const fakeComputer = (navigated: string[], kind: Computer["kind"]) =>
 	({
 		act: () => Effect.succeed(shot()),
 		consoleMessages: Effect.succeed([]),
 		evaluate: () => Effect.succeed({ token: PASSWORD }),
-		kind: "desktop",
+		kind,
 		logs: () => Effect.succeed(`started with ${PASSWORD}`),
 		navigate: (url: string) =>
 			Effect.sync(() => {
@@ -58,7 +58,9 @@ const recording = <A, E>(
 	return Effect.gen(function* () {
 		const config = yield* parseWitnessConfig(yaml)
 		yield* CurrentRun.use((run) => run.addSecrets([PASSWORD]))
-		const r = yield* makeRecorder(fakeComputer(navigated), config, [C1, C2], 1280)
+		// A device app runs on a phone, as the providers decide.
+		const kind = Option.isSome(config.device) ? "phone" : "desktop"
+		const r = yield* makeRecorder(fakeComputer(navigated, kind), config, [C1, C2], 1280)
 		return yield* f(r, { dir: join(dir, "run"), navigated })
 	}).pipe(Effect.provide(runLayer(dir, "run").pipe(Layer.provideMerge(NodeServices.layer))))
 }
@@ -91,6 +93,18 @@ describe("Recorder", () => {
 					yield* r.perform(ToolCall.Navigate({ label, url: "myapp://todos/1" }))
 					yield* r.perform(ToolCall.Navigate({ label, url: "http://localhost:8081/status" }))
 					assert.deepStrictEqual(navigated, ["myapp://todos/1", "http://localhost:8081/status"])
+				}),
+			DEVICE_APP
+		)
+	)
+
+	it.effect("says a device app's console and network are not captured, rather than that they are empty", () =>
+		recording(
+			(r) =>
+				Effect.gen(function* () {
+					for (const call of [ToolCall.ConsoleLogs(), ToolCall.NetworkErrors()]) {
+						assert.include((yield* Effect.flip(r.perform(call))).message, "not captured on a device app")
+					}
 				}),
 			DEVICE_APP
 		)

@@ -1,4 +1,4 @@
-// The ComputerProvider witness runs with: a simulator when witness.yaml names a
+// The ComputerProvider witness runs with: a simulator or emulator when witness.yaml names a
 // device app, the Linux computer in Docker otherwise.
 import { Effect, Layer } from "effect"
 import { ComputerProvider } from "./computer.ts"

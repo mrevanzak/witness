@@ -1,6 +1,6 @@
 // The computer abstraction. One verification run = one fresh Computer whose
 // lifetime is a Scope: leaving the scope tears down the container, its sibling
-// services and its network (Docker), or the simulator and the processes the run
+// services and its network (Docker), or the simulator or emulator and the processes the run
 // started on the host (a device app).
 
 import type { DeviceConfig, ServiceSpec } from "@witness/domain"
@@ -21,7 +21,7 @@ export class DockerError extends Schema.TaggedError<DockerError>()("DockerError"
 	operation: Schema.String,
 }) {}
 
-/** Creating, driving or deleting the simulator of a device run failed. */
+/** Creating, driving or deleting the simulator or emulator of a device run failed. */
 export class DeviceError extends Schema.TaggedError<DeviceError>()("DeviceError", {
 	message: Schema.String,
 	operation: Schema.String,
@@ -61,7 +61,7 @@ export type ComputerSpec = {
 /** What the provider adds around the control client: the container and its network. */
 export type ComputerHandle = {
 	readonly id: string
-	/** What the tester looks at: a Linux desktop with Chromium, or a phone simulator. */
+	/** What the tester looks at: a Linux desktop with Chromium, or a phone (simulator or emulator). */
 	readonly kind: "desktop" | "phone"
 	/** Host URL of the noVNC live view, when enabled. */
 	readonly liveView: string | undefined

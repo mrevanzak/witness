@@ -192,6 +192,11 @@ export const makeRecorder = Effect.fn("makeRecorder")(function* (
 	const failed = (what: string) => (e: { readonly message: string }) =>
 		new ActionFailed({ message: `${what}: ${e.message}` })
 	const reject = (message: string) => Effect.fail(new ActionFailed({ message }))
+	// A device app has no browser console or request log; saying "none" would read as evidence.
+	const browserOnly = (what: string) =>
+		computer.kind === "desktop"
+			? Effect.void
+			: reject(`${what} are not captured on a device app; read the app's log instead.`)
 
 	const sent = yield* Clock.currentTimeMillis
 	const first = yield* computer.screenshot(shot).pipe(Effect.orDie)
@@ -380,6 +385,7 @@ export const makeRecorder = Effect.fn("makeRecorder")(function* (
 				}),
 			ConsoleLogs: () =>
 				Effect.gen(function* () {
+					yield* browserOnly("Console messages")
 					const { console: c } = yield* drain
 					yield* step({ at: yield* now, count: c.length, tool: "console_logs" })
 					const body = c.map((m) => `[${m.type}] ${m.text}`).join("\n")
@@ -465,6 +471,7 @@ export const makeRecorder = Effect.fn("makeRecorder")(function* (
 				}),
 			NetworkErrors: () =>
 				Effect.gen(function* () {
+					yield* browserOnly("Network requests")
 					const { network: n } = yield* drain
 					yield* step({ at: yield* now, count: n.length, tool: "network_errors" })
 					const body = n.map(networkLine).join("\n")

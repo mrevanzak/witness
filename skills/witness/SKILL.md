@@ -74,8 +74,8 @@ You are the tester. Every action you send goes through the computer's mouse and 
 3. **Check each criterion:** `begin C1`, act, look, `still`, `end`.
    - Act: `snapshot` lists elements with refs, then `click-ref e4`. Otherwise `click <x> <y>`, `click-text <text>`, `type <text>`, `key Return`, `scroll <dy> [x y]`, `navigate <path>`, `wait <ms>`.
    - Give every action `--label "<caption>"`: imperative, at most 8 words ("Submit with an empty title"). It is the video caption.
-   - Look: each action prints `screenshot: <file>` (1280x720, the same space as `click` coordinates). Read it before your next move. `shot` takes a fresh one.
-   - Inspect: `console` (browser errors, failed requests), `logs [tail]` (app server), `eval <js>`. Eval is invisible in the video, so back a verdict with a still of what a person would see.
+   - Look: each action prints `screenshot: <file>`, in the same pixels as `click` coordinates (the size `SESSION READY` states: 1280x720 on a desktop, a phone stands 1280 high). Read it before your next move. `shot` takes a fresh one.
+   - Inspect: `console` (browser errors, failed requests), `logs [tail]` (app server), `eval <js>`. A device app has only `logs`. Eval is invisible in the video, so back a verdict with a still of what a person would see.
    - `still <name> "<caption>"` saves full-resolution evidence; the caption is one sentence saying what it proves.
    - `end C1 pass|fail|blocked "<notes>"`: what you did and saw, concrete (texts, counts). pass only when a screenshot showed it. Something you could not check is blocked, never pass.
    - The test account's password: `type-secret`, never `type`.

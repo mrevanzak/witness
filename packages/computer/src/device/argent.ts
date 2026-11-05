@@ -1,4 +1,4 @@
-// argent drives the simulator (touch, keyboard, screenshots, the accessibility
+// argent drives the simulator or emulator (touch, keyboard, screenshots, the accessibility
 // tree). Witness uses the argent install on the user's PATH through its JS client,
 // so it needs no copy of its own, and fails with how to install it when missing.
 import { execFileSync } from "node:child_process"
