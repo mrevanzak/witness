@@ -31,6 +31,7 @@ export type LiveEventData = {
 		readonly repo: string
 		readonly runDir: string
 		readonly sha: string
+		readonly title: string
 	}
 	readonly "state.start": { readonly sha: string; readonly state: "before" | "after" }
 	readonly verdict: { readonly criteria: readonly string[]; readonly overall: CriterionStatus; readonly usd: number }

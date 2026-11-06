@@ -27,6 +27,7 @@ import {
 	RenderDefaults,
 	RUN_FILES,
 	RunInfo,
+	reportTitle,
 	secretEnvValues,
 	Verdict,
 	WalkthroughReport,
@@ -491,6 +492,7 @@ export const verify = Effect.fn("verify")(function* (opts: VerifyOptions) {
 		repo: repo.root,
 		runDir: run.dir,
 		sha: repo.sha,
+		title: reportTitle(opts.task),
 	})
 	const single = (o: RunOutcome): VerifyOutcome => ({ ...o, before: Option.none() })
 

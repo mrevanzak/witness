@@ -123,7 +123,7 @@ export const LIVE_PAGE = `<!doctype html>
 		}
 		const d = e.data || {};
 		if (PHASES[e.event]) $("phase").textContent = PHASES[e.event] + (e.event === "boot.setup" && d.cmd ? " · " + d.cmd : "");
-		if (e.event === "run.start") { if (!runDir) { $("meta").textContent = (d.sha || "").slice(0, 7) + " · " + d.mode; mode = d.mode; runDir = d.runDir || ""; } }
+		if (e.event === "run.start") { if (d.title) document.title = d.title + " · Witness live"; if (!runDir) { $("meta").textContent = (d.sha || "").slice(0, 7) + " · " + d.mode; mode = d.mode; runDir = d.runDir || ""; } }
 		// A before/after run checks the base commit, then the change, in two computers.
 		if (e.event === "state.start") {
 			side = d.state;
