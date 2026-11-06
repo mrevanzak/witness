@@ -19,6 +19,7 @@ const stubRecorder = (runDir: string, calls: ToolCall[]) =>
 				return { screen: Option.none(), text: call._tag }
 			}),
 		runDir,
+		screenText: "The screen is a 1920x1080 Linux desktop.",
 	}) as unknown as RecorderApi
 
 const Env = Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)

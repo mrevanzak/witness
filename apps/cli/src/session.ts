@@ -22,7 +22,6 @@ import {
 	newRunId,
 	Recorder,
 	type RecorderApi,
-	SESSION_SHOT_WIDTH,
 	type SessionProgram,
 	ToolCall,
 } from "@witness/orchestrator"
@@ -63,6 +62,8 @@ const SessionStatus = Schema.Union([
 		carried: Schema.Array(Schema.String),
 		/** That side's run folder. */
 		runDir: Schema.String,
+		/** This side's screen and what coordinates mean on it. */
+		screen: Schema.String,
 		seq: Schema.Int,
 		sha: Schema.String,
 		side: Schema.Literals(["before", "after", "single"]),
@@ -244,6 +245,7 @@ export const sessionHost = Effect.fnUntraced(function* (runDir: string, idleMs: 
 				_tag: "Ready",
 				carried: side.carried.map((c) => c.id),
 				runDir: recorder.runDir,
+				screen: recorder.screenText,
 				seq,
 				sha: side.sha,
 				side: Option.getOrElse(side.state, () => "single" as const),
@@ -356,7 +358,7 @@ const readyText = (s: Ready) =>
 			: []),
 		"SESSION READY. Drive it with `witness act <action> [args] [--label <caption>]`:",
 		...Object.values(ACTION_SPECS).map((a) => `  ${a.usage}`),
-		`Coordinates are in ${SESSION_SHOT_WIDTH}x${(SESSION_SHOT_WIDTH * 9) / 16} screenshot pixels.`,
+		s.screen,
 	].join("\n")
 
 /** Prints the verdict in `dir` and returns its exit code. */

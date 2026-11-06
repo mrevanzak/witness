@@ -7,6 +7,9 @@
 // against the same criteria, in its own run under `<runDir>/before/`, so the report
 // can show the app before and after the change. The change's run is the one that
 // counts. Anything that stops a side before its verdict leaves a blocked verdict.
+
+import { homedir } from "node:os"
+import { isAbsolute, resolve } from "node:path"
 import { type Computer, ComputerProvider } from "@witness/computer"
 import {
 	type AgentPlan,
@@ -14,6 +17,7 @@ import {
 	BlockedVerdict,
 	type Criterion,
 	configSecrets,
+	type DeviceConfig,
 	type EvidenceStates,
 	exitCodeOf,
 	messageOf,
@@ -62,6 +66,8 @@ export type VerifyOptions = {
 	readonly mode: VerifyMode
 	/** Verify the base commit and the change at the same time (agent and spec modes; sessions stay in order). */
 	readonly parallel: boolean
+	/** Device apps: what this change needs left on when slimmed (simslim categories, avdslim groups), beside `device.services`. */
+	readonly services?: readonly string[]
 	/** Called once the computer is up (live view). */
 	readonly onComputer?: (computer: Computer) => Effect.Effect<void>
 	readonly ref: string
@@ -122,8 +128,38 @@ const blockedOutcome = (reason: string, message: string, logTail = "") =>
 		return yield* outcome({ _tag: "Blocked", blocked })
 	})
 
+const HOME_PREFIX = /^~(?=\/)/
+
+/**
+ * The device as a run uses it: the app as an absolute host path (`~/` expanded, or
+ * relative to `configDir`, the folder of a config passed with --config; a repo's
+ * witness.yaml must name it absolutely), plus the `services` this change needs.
+ */
+export const runDevice = (device: DeviceConfig, configDir: Option.Option<string>, services: readonly string[]) => {
+	const app = device.app.replace(HOME_PREFIX, homedir())
+	return Option.isNone(configDir) && !isAbsolute(app)
+		? Effect.fail(
+				new ConfigUnusable({
+					message: "device.app must be an absolute path in a repo's witness.yaml",
+					reason: "invalid_witness_yaml",
+				})
+			)
+		: Effect.succeed({
+				...device,
+				app: resolve(
+					Option.getOrElse(configDir, () => "/"),
+					app
+				),
+				services: [...new Set([...device.services, ...services])],
+			} satisfies DeviceConfig)
+}
+
 /** witness.yaml (repo or verifier-side), with verifier-side staged files and secret env. */
-const loadConfig = Effect.fnUntraced(function* (configPath: Option.Option<string>, repo: RepoRef) {
+const loadConfig = Effect.fnUntraced(function* (
+	configPath: Option.Option<string>,
+	repo: RepoRef,
+	services: readonly string[]
+) {
 	const fs = yield* FileSystem.FileSystem
 	const path = yield* Path.Path
 	const run = yield* CurrentRun
@@ -150,8 +186,13 @@ const loadConfig = Effect.fnUntraced(function* (configPath: Option.Option<string
 			reason: "no_witness_yaml",
 		})
 	}
-	const parsed = yield* parseWitnessConfig(text.value).pipe(Effect.mapError(invalid))
-	yield* run.addSecrets(configSecrets(parsed))
+	const parsedFile = yield* parseWitnessConfig(text.value).pipe(Effect.mapError(invalid))
+	yield* run.addSecrets(configSecrets(parsedFile))
+	const configDir = Option.map(configPath, (p) => path.dirname(path.resolve(p)))
+	const parsed: WitnessConfig = {
+		...parsedFile,
+		device: yield* Effect.transposeOption(Option.map(parsedFile.device, (d) => runDevice(d, configDir, services))),
+	}
 
 	// Host files and secret env only from a verifier-side config, never from the repo under test.
 	if (Option.isNone(configPath)) {
@@ -321,9 +362,11 @@ const runSide = (opts: VerifyOptions, side: Side) =>
 
 		return yield* Effect.scoped(
 			Effect.gen(function* () {
+				const { device } = side.config
 				const computer = yield* provider.create({
 					artifactsDir: run.computerDir,
 					cpus: opts.cpus,
+					...Option.match(device, { onNone: () => ({}), onSome: (d) => ({ device: d }) }),
 					enableVnc: opts.enableVnc,
 					keep: side.keep,
 					memoryGb: opts.memoryGb,
@@ -333,6 +376,7 @@ const runSide = (opts: VerifyOptions, side: Side) =>
 					id: computer.id.slice(0, 12),
 					liveView: computer.liveView,
 					network: computer.network,
+					...Option.match(device, { onNone: () => ({}), onSome: (d) => ({ services: d.services }) }),
 				})
 				if (opts.onComputer) {
 					yield* opts.onComputer(computer)
@@ -454,7 +498,7 @@ export const verify = Effect.fn("verify")(function* (opts: VerifyOptions) {
 		[git.diff(repo), git.changedFiles(repo), git.showFile(repo, "README.md")],
 		{ concurrency: "unbounded" }
 	)
-	const loaded = yield* loadConfig(opts.configPath, repo).pipe(Effect.result)
+	const loaded = yield* loadConfig(opts.configPath, repo, opts.services ?? []).pipe(Effect.result)
 	yield* writeRunInfo(
 		opts.task,
 		repo,
@@ -465,6 +509,14 @@ export const verify = Effect.fn("verify")(function* (opts: VerifyOptions) {
 		return single(yield* blockedOutcome(loaded.failure.reason, loaded.failure.message))
 	}
 	const { config, staged } = loaded.success
+	if (Option.isSome(config.device) && opts.mode._tag === "Spec") {
+		return single(
+			yield* blockedOutcome(
+				"mode_unsupported",
+				"Playwright walkthroughs drive a browser; check a device app in a session (`run --session`)"
+			)
+		)
+	}
 	const change: Change = { configText: loaded.success.text, diff, files, readme, repo, task: opts.task }
 
 	const prepare = yield* preparer(opts.mode, change, config).pipe(Effect.result)
@@ -504,7 +556,8 @@ export const verify = Effect.fn("verify")(function* (opts: VerifyOptions) {
 	const after = (carried: readonly Criterion[]) => runSide(opts, side(Option.some("after"), carried))
 
 	// Specs and the agent bring their own criteria, so both commits can run at once.
-	if (opts.parallel && mode._tag !== "Session") {
+	// A device app's commits share the dev server's port, so they run in order.
+	if (opts.parallel && mode._tag !== "Session" && Option.isNone(config.device)) {
 		yield* run.log("before.parallel", { sha: baseSha.value })
 		const [b, a] = yield* Effect.all([before(false), after([])], { concurrency: 2 })
 		return { ...a, before: b }

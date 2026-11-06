@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // witness: independent, recorded QA for code changes.
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
-import { ComputerProvider, DockerComputerProvider } from "@witness/computer"
+import { ComputerProvider, ComputerProviderLive } from "@witness/computer"
 import { EXIT_ERROR, EXIT_USAGE, loadRunPair, pairRuns, pairSides } from "@witness/domain"
 import {
 	exitCodeOfResult,
@@ -80,6 +80,12 @@ const runFlags = {
 	ref: Flag.String("ref").pipe(Flag.withDescription("Commit, branch or tag to verify"), Flag.withDefault("HEAD")),
 	repo: Flag.String("repo").pipe(Flag.withDescription("App directory inside a git repo"), Flag.withDefault(".")),
 	runsDir: runsDirFlag,
+	services: Flag.String("services").pipe(
+		Flag.withDescription(
+			"Device apps: what this change needs kept running when the device is slimmed, comma-separated: simslim categories on iOS (e.g. photos,pim), avdslim groups on Android; on top of witness.yaml `device.services`"
+		),
+		Flag.optional
+	),
 	session: Flag.Boolean("session").pipe(
 		Flag.withDescription(
 			"Session mode: boot, record, and wait for `witness act` commands from the caller (a Claude Code session drives the QA)"
@@ -255,6 +261,14 @@ const run = Command.make(
 			parallel: f.parallel,
 			ref: f.ref,
 			repo: f.repo,
+			services: Option.match(f.services, {
+				onNone: () => [],
+				onSome: (s) =>
+					s
+						.split(",")
+						.map((x) => x.trim())
+						.filter(Boolean),
+			}),
 			states: f.states,
 			task: mode._tag === "BootOnly" ? "boot only" : mode.task,
 		}).pipe(
@@ -488,7 +502,7 @@ const witness = Command.make("witness").pipe(
 	Command.withSubcommands([initCmd, imageCmd, run, actCmd, render, report, compare, uploadCmd, publishCmd, cleanup])
 )
 
-const Services = Layer.mergeAll(Git.layer, DockerComputerProvider).pipe(
+const Services = Layer.mergeAll(Git.layer, ComputerProviderLive).pipe(
 	Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))
 )
 

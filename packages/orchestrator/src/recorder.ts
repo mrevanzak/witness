@@ -7,15 +7,7 @@
 //   in typed text, and is masked in page text, logs and notes;
 // - a criterion that was never ended is ended blocked, with a screenshot.
 // Coordinates in and out are screenshot pixels (`ShotSpace`), not screen pixels.
-import {
-	type Computer,
-	type ConsoleMessage,
-	type NetworkEvent,
-	type PageElement,
-	SCREEN,
-	type Screenshot,
-	type ShotOptions,
-} from "@witness/computer"
+import type { Computer, ConsoleMessage, NetworkEvent, PageElement, Screenshot, ShotOptions } from "@witness/computer"
 import {
 	type Criterion,
 	type CriterionStatus,
@@ -34,17 +26,34 @@ import { type StepInput, Steps } from "./steps.ts"
 /** An action was refused (it broke a rule or named something unknown) or the computer could not do it. */
 export class ActionFailed extends Schema.TaggedError<ActionFailed>()("ActionFailed", { message: Schema.String }) {}
 
-/** Screenshot pixels the tester sees, mapped onto the 1920x1080 screen. */
-export const shotSpace = (width: number) => {
-	const scale = SCREEN.width / width
+/**
+ * Screenshot pixels the tester sees, mapped onto the screen: the screen scaled so
+ * its longer side is `longSide` (a 1920x1080 desktop at 1280 is 1280x720; a phone
+ * stands upright at 1280 high).
+ */
+export const shotSpace = (screen: { readonly width: number; readonly height: number }, longSide: number) => {
+	const scale = Math.max(screen.width, screen.height) / longSide
 	return {
-		height: Math.round((width * 9) / 16),
+		height: Math.round(screen.height / scale),
 		toImage: (v: number) => Math.round(v / scale),
 		toScreen: (v: number) => Math.round(v * scale),
-		width,
+		width: Math.round(screen.width / scale),
 	}
 }
 export type ShotSpace = ReturnType<typeof shotSpace>
+
+const HTTP = /^https?:$/
+const isHttp = (protocol: string) => HTTP.test(protocol)
+
+/** What the tester looks at and what its coordinates mean, for the model's prompt and a session's driver. */
+export const describeScreen = (computer: Pick<Computer, "kind" | "screen">, space: ShotSpace) => {
+	const { height, width } = computer.screen
+	const screen =
+		computer.kind === "phone"
+			? `a ${width}x${height} phone screen showing the app. A click is a tap, a right click a long press, a drag a swipe; scroll swipes the content.`
+			: `a ${width}x${height} Linux desktop with one Chromium window showing the app.`
+	return `The screen is ${screen} Screenshots you receive are scaled to ${space.width}x${space.height}; every coordinate you send or receive is in screenshot pixels.`
+}
 
 type Point = { readonly x: number; readonly y: number }
 type NoArgs = Record<never, never>
@@ -146,6 +155,8 @@ export type Recorded = {
 
 export type RecorderApi = {
 	readonly runDir: string
+	/** The screen and its coordinate space, for whoever drives the recorder (`describeScreen`). */
+	readonly screenText: string
 	/** The screen when the recorder started. */
 	readonly first: Screenshot
 	readonly state: Effect.Effect<RecorderState>
@@ -162,14 +173,16 @@ export const makeRecorder = Effect.fn("makeRecorder")(function* (
 	computer: Computer,
 	config: WitnessConfig,
 	criteria: readonly Criterion[],
-	imageWidth: number
+	longSide: number
 ) {
 	const run = yield* CurrentRun
 	const steps = yield* Steps
 	const secrets = yield* run.secrets
-	const space = shotSpace(imageWidth)
-	const shot: ShotOptions = { format: "jpeg", quality: 80, width: imageWidth }
+	const space = shotSpace(computer.screen, longSide)
+	const shot: ShotOptions = { format: "jpeg", quality: 80, width: space.width }
 	const secret = Option.flatMap(config.login, (l) => Option.fromUndefinedOr(l.password))
+	// A device app (its url is a deep link) also opens links in its own scheme; a web app only http(s).
+	const appScheme = new URL(config.url).protocol
 	const allowedHosts = new Set([
 		new URL(config.url).hostname,
 		"localhost",
@@ -179,6 +192,11 @@ export const makeRecorder = Effect.fn("makeRecorder")(function* (
 	const failed = (what: string) => (e: { readonly message: string }) =>
 		new ActionFailed({ message: `${what}: ${e.message}` })
 	const reject = (message: string) => Effect.fail(new ActionFailed({ message }))
+	// A device app has no browser console or request log; saying "none" would read as evidence.
+	const browserOnly = (what: string) =>
+		computer.kind === "desktop"
+			? Effect.void
+			: reject(`${what} are not captured on a device app; read the app's log instead.`)
 
 	const sent = yield* Clock.currentTimeMillis
 	const first = yield* computer.screenshot(shot).pipe(Effect.orDie)
@@ -367,6 +385,7 @@ export const makeRecorder = Effect.fn("makeRecorder")(function* (
 				}),
 			ConsoleLogs: () =>
 				Effect.gen(function* () {
+					yield* browserOnly("Console messages")
 					const { console: c } = yield* drain
 					yield* step({ at: yield* now, count: c.length, tool: "console_logs" })
 					const body = c.map((m) => `[${m.type}] ${m.text}`).join("\n")
@@ -426,11 +445,11 @@ export const makeRecorder = Effect.fn("makeRecorder")(function* (
 			Navigate: ({ label, url }) =>
 				Effect.gen(function* () {
 					const target = Option.liftThrowable((u: string) => new URL(u, config.url))(url)
-					if (
-						Option.isNone(target) ||
-						!/^https?:$/.test(target.value.protocol) ||
-						!allowedHosts.has(target.value.hostname)
-					) {
+					if (Option.isNone(target)) {
+						return yield* reject(`Not a URL: ${url}`)
+					}
+					const ownLink = !isHttp(appScheme) && target.value.protocol === appScheme
+					if (!(ownLink || (isHttp(target.value.protocol) && allowedHosts.has(target.value.hostname)))) {
 						return yield* reject(`Only the app under test may be opened (${[...allowedHosts].join(", ")}).`)
 					}
 					const nav = yield* computer
@@ -452,6 +471,7 @@ export const makeRecorder = Effect.fn("makeRecorder")(function* (
 				}),
 			NetworkErrors: () =>
 				Effect.gen(function* () {
+					yield* browserOnly("Network requests")
 					const { network: n } = yield* drain
 					yield* step({ at: yield* now, count: n.length, tool: "network_errors" })
 					const body = n.map(networkLine).join("\n")
@@ -556,5 +576,6 @@ export const makeRecorder = Effect.fn("makeRecorder")(function* (
 
 	// Boot noise is not blamed on the first criterion.
 	yield* drain
-	return { finish, first, perform, runDir: run.dir, state } satisfies RecorderApi
+	const screenText = describeScreen(computer, space)
+	return { finish, first, perform, runDir: run.dir, screenText, state } satisfies RecorderApi
 })

@@ -7,7 +7,7 @@ import type { Computer, Screenshot } from "@witness/computer"
 import { Criterion, parseWitnessConfig } from "@witness/domain"
 import { Effect, Layer, Option } from "effect"
 import { CurrentRun } from "../src/current-run.ts"
-import { makeRecorder, type RecorderApi, ToolCall } from "../src/recorder.ts"
+import { describeScreen, makeRecorder, type RecorderApi, shotSpace, ToolCall } from "../src/recorder.ts"
 import { runLayer } from "../src/verifier.ts"
 
 const PASSWORD = "hunter22"
@@ -22,11 +22,12 @@ const shot = (): Screenshot => ({
 })
 
 // Only what the recorder calls; nothing else of the computer is reached.
-const fakeComputer = (navigated: string[]) =>
+const fakeComputer = (navigated: string[], kind: Computer["kind"]) =>
 	({
 		act: () => Effect.succeed(shot()),
 		consoleMessages: Effect.succeed([]),
 		evaluate: () => Effect.succeed({ token: PASSWORD }),
+		kind,
 		logs: () => Effect.succeed(`started with ${PASSWORD}`),
 		navigate: (url: string) =>
 			Effect.sync(() => {
@@ -36,22 +37,30 @@ const fakeComputer = (navigated: string[]) =>
 		networkEvents: Effect.succeed([]),
 		pageSnapshot: () =>
 			Effect.succeed({ elements: [], text: `password: ${PASSWORD}`, title: "t", url: "http://app:3000/" }),
+		screen: { height: 1080, width: 1920 },
 		screenshot: () => Effect.succeed(shot()),
 	}) as unknown as Computer
 
 const C1 = new Criterion({ description: "d", id: "C1", kind: "feature" })
 const C2 = new Criterion({ description: "r", id: "C2", kind: "regression" })
 
+const WEB_APP = `start: x\nurl: http://app:3000\nlogin: { email: qa@example.com, password: ${PASSWORD} }\nservices: { db: { image: postgres } }`
+const DEVICE_APP =
+	"start: x\nurl: myapp://home\nhealth: http://localhost:8081/status\ndevice: { platform: ios, app: /tmp/My.app }"
+
 /** A recorder over a fake computer, in a fresh run dir. */
-const recording = <A, E>(f: (r: RecorderApi, ctx: { dir: string; navigated: string[] }) => Effect.Effect<A, E>) => {
+const recording = <A, E>(
+	f: (r: RecorderApi, ctx: { dir: string; navigated: string[] }) => Effect.Effect<A, E>,
+	yaml = WEB_APP
+) => {
 	const dir = mkdtempSync(join(tmpdir(), "witness-recorder-"))
 	const navigated: string[] = []
 	return Effect.gen(function* () {
-		const config = yield* parseWitnessConfig(
-			`start: x\nurl: http://app:3000\nlogin: { email: qa@example.com, password: ${PASSWORD} }\nservices: { db: { image: postgres } }`
-		)
+		const config = yield* parseWitnessConfig(yaml)
 		yield* CurrentRun.use((run) => run.addSecrets([PASSWORD]))
-		const r = yield* makeRecorder(fakeComputer(navigated), config, [C1, C2], 1280)
+		// A device app runs on a phone, as the providers decide.
+		const kind = Option.isSome(config.device) ? "phone" : "desktop"
+		const r = yield* makeRecorder(fakeComputer(navigated, kind), config, [C1, C2], 1280)
 		return yield* f(r, { dir: join(dir, "run"), navigated })
 	}).pipe(Effect.provide(runLayer(dir, "run").pipe(Layer.provideMerge(NodeServices.layer))))
 }
@@ -64,10 +73,40 @@ describe("Recorder", () => {
 			Effect.gen(function* () {
 				const refused = yield* Effect.flip(r.perform(ToolCall.Navigate({ label, url: "https://evil.example/" })))
 				assert.include(refused.message, "Only the app under test")
+				const deepLink = yield* Effect.flip(r.perform(ToolCall.Navigate({ label, url: "myapp://home" })))
+				assert.include(deepLink.message, "Only the app under test")
 				yield* r.perform(ToolCall.Navigate({ label, url: "/todos" }))
 				yield* r.perform(ToolCall.Navigate({ label, url: "http://db:5432/" }))
 				assert.deepStrictEqual(navigated, ["http://app:3000/todos", "http://db:5432/"])
 			})
+		)
+	)
+
+	it.effect("lets a device app open links in its own scheme, and nothing else outside its hosts", () =>
+		recording(
+			(r, { navigated }) =>
+				Effect.gen(function* () {
+					for (const url of ["otherapp://home", "https://evil.example/"]) {
+						const refused = yield* Effect.flip(r.perform(ToolCall.Navigate({ label, url })))
+						assert.include(refused.message, "Only the app under test")
+					}
+					yield* r.perform(ToolCall.Navigate({ label, url: "myapp://todos/1" }))
+					yield* r.perform(ToolCall.Navigate({ label, url: "http://localhost:8081/status" }))
+					assert.deepStrictEqual(navigated, ["myapp://todos/1", "http://localhost:8081/status"])
+				}),
+			DEVICE_APP
+		)
+	)
+
+	it.effect("says a device app's console and network are not captured, rather than that they are empty", () =>
+		recording(
+			(r) =>
+				Effect.gen(function* () {
+					for (const call of [ToolCall.ConsoleLogs(), ToolCall.NetworkErrors()]) {
+						assert.include((yield* Effect.flip(r.perform(call))).message, "not captured on a device app")
+					}
+				}),
+			DEVICE_APP
 		)
 	)
 
@@ -123,4 +162,28 @@ describe("Recorder", () => {
 			})
 		)
 	)
+})
+
+describe("shotSpace", () => {
+	it("keeps a desktop at 1280x720 and stands a phone upright at 1280 high", () => {
+		const desktop = shotSpace({ height: 1080, width: 1920 }, 1280)
+		assert.deepStrictEqual([desktop.width, desktop.height, desktop.toScreen(640)], [1280, 720, 960])
+		const phone = shotSpace({ height: 2622, width: 1206 }, 1280)
+		assert.deepStrictEqual([phone.width, phone.height], [589, 1280])
+		assert.strictEqual(phone.toScreen(640), 1311)
+	})
+})
+
+describe("describeScreen", () => {
+	it("names the screen and the screenshot pixels coordinates are in", () => {
+		const desktop = { height: 1080, width: 1920 }
+		assert.include(
+			describeScreen({ kind: "desktop", screen: desktop }, shotSpace(desktop, 1280)),
+			"a 1920x1080 Linux desktop"
+		)
+		const phone = { height: 2622, width: 1206 }
+		const text = describeScreen({ kind: "phone", screen: phone }, shotSpace(phone, 1280))
+		assert.include(text, "a 1206x2622 phone screen")
+		assert.include(text, "scaled to 589x1280")
+	})
 })

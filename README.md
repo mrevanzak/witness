@@ -147,6 +147,33 @@ animation: false                           # default true: zoom on each action, 
 
 A config kept outside the repo can also copy files from your machine into the app (`files`) and load secret env from a file (`secret_env`). Witness redacts those values from every log, step, transcript and report. A `witness.yaml` inside the repo under test can do neither.
 
+### Mobile apps (iOS simulator, Android emulator)
+
+With a `device` key, a run uses a fresh iOS simulator or Android emulator on your Mac instead of the Linux computer. Witness creates the device, installs your app on it, runs `setup` and `start` on the Mac in a temporary copy of the commit, opens `url` (a deep link) on the device, and deletes everything when the run ends. It needs [argent](https://github.com/software-mansion/argent) on your PATH, which drives the device, plus Xcode for iOS or the Android SDK (`ANDROID_HOME`, default `~/Library/Android/sdk`, with `cmdline-tools`, `emulator` and a system image) for Android.
+
+The app is a build you made once. A development build that loads its JavaScript from a dev server (Expo dev client, React Native debug build) checks any change that touches only JavaScript. A change to native code needs a new build first.
+
+```yaml
+device:
+  platform: ios               # or android
+  app: ./MyApp.app            # a simulator .app or an emulator .apk; relative to this file, or absolute
+  type: iPhone 17 Pro         # optional; Android: a device profile, e.g. pixel_9. Default: the newest phone
+  runtime: iOS 26.5           # optional; Android: android-35 or android-35;google_apis. Default: the newest
+  services: [store, web]      # optional: what stays on when the device is slimmed (below)
+setup:
+  - npm ci
+start: npx expo start --dev-client --port 8099
+health: http://127.0.0.1:8099/status      # required: the dev server's health URL
+url: exp+my-app://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8099
+env: { CI: "1" }
+```
+
+`setup` and `start` get `WITNESS_DEVICE_ID`, the simulator's UDID or the emulator's adb serial, for things like `xcrun simctl spawn "$WITNESS_DEVICE_ID" defaults write <bundle id> <key> ...` or `adb -s "$WITNESS_DEVICE_ID" reverse tcp:8099 tcp:8099` (an emulator reaches the Mac's dev server through `adb reverse`). Run the session as usual: a tap is `click`, a long press `right_click`, a swipe `drag`, and `scroll` swipes the content.
+
+**Slim devices.** With [simslim](https://github.com/MobAI-App/simslim) (iOS) or [avdslim](https://github.com/kdbhalala/avdslim) (Android) on your PATH, the device boots without the background services a test run doesn't need: about a third of a simulator's memory, and an emulator at 1536 MB with `-lowram`. `device.services` lists what your app needs left on: simslim categories on iOS (default `store, web`: push and universal links) and avdslim `--skip` groups on Android (default `location`). `witness run --services photos` adds what one change needs. On Android, a Google APIs system image beats a Google Play one, which runs the Play Store's updaters and blocks `adb root`.
+
+Not yet: physical phones, `services`, walkthroughs, `eval`, console capture, the live view, and `--parallel` (the commits share the dev server's port, so they run in order).
+
 ## The CLI
 
 The skill drives the `witness` CLI, and you can run it yourself too, from scripts and CI. `witness --help` lists every command.
@@ -214,7 +241,7 @@ To work on Witness itself, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Early. The pipeline is tested end to end with a scripted model and with walkthroughs, on the demo app and on a real Next.js + Strapi + Supabase monorepo. The live acceptance run with the real model (4 of 5 correct verdicts per fixture branch) hasn't been run yet. Treat independent-mode verdicts as a second opinion until it has.
 
-Only web apps for now. Mobile apps and non-Linux guests are out of scope.
+Web apps, and mobile apps on an iOS simulator or Android emulator (see [Mobile apps](#mobile-apps-ios-simulator-android-emulator)). Physical phones and non-Linux desktop guests are not supported yet.
 
 ## Licenses
 

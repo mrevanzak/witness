@@ -29,6 +29,26 @@ git -C <repo> rev-parse HEAD                                                    
 
 Heavy stacks (Next + CMS builds) need `--memory-gb 9 --cpus 6`.
 
+**A mobile app** (React Native, Expo, native iOS or Android) runs on a fresh iOS simulator or Android emulator instead: the config gets a `device` key with a build of the app (`.app` for iOS, `.apk` for Android), and `url` is a deep link that opens the app on its dev server (README, "Mobile apps"). An app shipped on both platforms usually has one config per platform; check both when the change isn't platform-specific. The build only covers changes to JavaScript; if the change touches native code (`ios/`, `android/`, native dependencies, the React Native version), say the build must be rebuilt first and stop. On a phone, `click` taps, `right_click` long-presses, `drag` swipes, `scroll <dy>` swipes the content, and `key` takes `Return`, `BackSpace`, `Escape`, `Tab`, `home` or (Android) `back`. Close the keyboard (`key back` on Android) before swiping near the bottom of the screen, or the swipe types. No live view, no walkthroughs, no `eval`.
+
+When simslim (iOS) or avdslim (Android) is installed, the device boots without the background services a test run doesn't need. `device.services` in the config lists what the app always needs (iOS default `store,web`, Android default `location`). Before the run, read the diff for system features the change touches, and keep them on with `--services`:
+
+| The change uses | iOS `--services` | Android `--services` |
+|---|---|---|
+| Push notifications, in-app purchases | `store` (default) | always on |
+| Universal links / app links, Safari | `web` (default) | always on |
+| Location | always on | `location` (default) |
+| Photo picker, photo library | `photos` | always on |
+| Contacts, calendar, reminders, mail | `pim` | always on |
+| iCloud / Google account sync | `icloud` | `sync` |
+| Bluetooth | always on | `bluetooth` |
+| HealthKit, HomeKit | `health` | always on |
+| Spotlight, Siri, dictation, speech | `search`, `siri` | always on |
+| Wallet, App Clips, Apple Pay | `other` | always on |
+| Background work (jobs, many cached apps) | always on | `bglimit` |
+
+`simslim profiles <id>` and `avdslim profiles` list what each one turns off. If a feature fails in a way that looks like a missing system service, rerun with it kept on before calling it a fail, and say in a note what the run kept.
+
 Runs check the base commit first and then the change (`states: before-after`, the default), so the evidence shows the app before and after. The base commit's run is `<runDir>/before/`. Pass `--states after` to check only the change, for example on a boot check or when the user asks for it; `states: after` in the config makes that the default. Walkthrough and independent runs take `--parallel` to check both commits at once (about half the time, twice the memory); add it when the user asks for speed and the machine has room. Sessions always go in order.
 
 Runs open a live view by default (the desktop, criteria and steps in the browser), so the user can watch you work. Its **Take over** button hands the user the computer's mouse and keyboard until they press **Hand back**. Pass `--no-live` for boot checks and other runs nobody needs to watch.
@@ -54,8 +74,8 @@ You are the tester. Every action you send goes through the computer's mouse and 
 3. **Check each criterion:** `begin C1`, act, look, `still`, `end`.
    - Act: `snapshot` lists elements with refs, then `click-ref e4`. Otherwise `click <x> <y>`, `click-text <text>`, `type <text>`, `key Return`, `scroll <dy> [x y]`, `navigate <path>`, `wait <ms>`.
    - Give every action `--label "<caption>"`: imperative, at most 8 words ("Submit with an empty title"). It is the video caption.
-   - Look: each action prints `screenshot: <file>` (1280x720, the same space as `click` coordinates). Read it before your next move. `shot` takes a fresh one.
-   - Inspect: `console` (browser errors, failed requests), `logs [tail]` (app server), `eval <js>`. Eval is invisible in the video, so back a verdict with a still of what a person would see.
+   - Look: each action prints `screenshot: <file>`, in the same pixels as `click` coordinates (the size `SESSION READY` states: 1280x720 on a desktop, a phone stands 1280 high). Read it before your next move. `shot` takes a fresh one.
+   - Inspect: `console` (browser errors, failed requests), `logs [tail]` (app server), `eval <js>`. A device app has only `logs`. Eval is invisible in the video, so back a verdict with a still of what a person would see.
    - `still <name> "<caption>"` saves full-resolution evidence; the caption is one sentence saying what it proves.
    - `end C1 pass|fail|blocked "<notes>"`: what you did and saw, concrete (texts, counts). pass only when a screenshot showed it. Something you could not check is blocked, never pass.
    - The test account's password: `type-secret`, never `type`.

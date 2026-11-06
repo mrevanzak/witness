@@ -1,11 +1,12 @@
 // Boots the app under test inside a computer: source -> services -> setup ->
-// start (stdout/stderr -> /artifacts/app.log) -> health -> Chromium on the URL.
+// start (stdout/stderr -> app.log in the artifacts) -> health -> Chromium on the
+// URL (or, for a device app, the simulator or emulator on its deep link).
 // A boot failure is a typed AppBootFailed with the log tail; the verifier turns it
 // into a `blocked` verdict rather than a crash.
 import type { Computer } from "@witness/computer"
 import type { WitnessConfig } from "@witness/domain"
 import { Clock, Effect, Option, Schema } from "effect"
-import { APP_DIR, QA_OWNER, sh } from "./container.ts"
+import { QA_OWNER, sh } from "./container.ts"
 import { CurrentRun } from "./current-run.ts"
 import { chownTar } from "./tar.ts"
 
@@ -29,6 +30,7 @@ export const bootApp = Effect.fn("bootApp")(function* (
 	staged: Option.Option<Uint8Array>
 ) {
 	const run = yield* CurrentRun
+	const { app: appDir, artifacts } = computer.paths
 	const started = yield* Clock.currentTimeMillis
 	const failWith = (stage: BootStage, logFile?: string) => (message: string) =>
 		Effect.gen(function* () {
@@ -40,15 +42,15 @@ export const bootApp = Effect.fn("bootApp")(function* (
 		failWith(stage, logFile)(e.message)
 
 	// 1. Source (exact commit, owned by qa) and staged verifier-side files.
-	yield* computer.putArchive(chownTar(source, QA_OWNER), APP_DIR).pipe(Effect.catch(asBoot("upload")))
+	yield* computer.putArchive(chownTar(source, QA_OWNER), appDir).pipe(Effect.catch(asBoot("upload")))
 	if (Option.isSome(staged)) {
-		yield* computer.putArchive(staged.value, APP_DIR).pipe(Effect.catch(asBoot("upload")))
+		yield* computer.putArchive(staged.value, appDir).pipe(Effect.catch(asBoot("upload")))
 	}
 	const check = yield* computer
-		.exec({ cmd: `test -w ${APP_DIR} && ls -A ${APP_DIR}` })
+		.exec({ cmd: `test -w ${sh(appDir)} && ls -A ${sh(appDir)}` })
 		.pipe(Effect.catch(asBoot("upload")))
 	if (check.code !== 0) {
-		return yield* failWith("upload")(`source not writable in ${APP_DIR}: ${check.stderr}`)
+		return yield* failWith("upload")(`source not writable in ${appDir}: ${check.stderr}`)
 	}
 	yield* run.log("boot.source", { files: check.stdout.split("\n").filter(Boolean).length })
 
@@ -81,8 +83,8 @@ export const bootApp = Effect.fn("bootApp")(function* (
 		const t = yield* Clock.currentTimeMillis
 		const res = yield* computer
 			.exec({
-				cmd: `echo "\\$ "${sh(cmd)} >> /artifacts/setup.log; { ${cmd} ; } >> /artifacts/setup.log 2>&1`,
-				cwd: APP_DIR,
+				cmd: `echo "\\$ "${sh(cmd)} >> ${sh(`${artifacts}/setup.log`)}; { ${cmd} ; } >> ${sh(`${artifacts}/setup.log`)} 2>&1`,
+				cwd: appDir,
 				env: config.env,
 				timeout_ms: remaining,
 			})
@@ -98,7 +100,7 @@ export const bootApp = Effect.fn("bootApp")(function* (
 
 	// 4. Start in the background, then 5. wait for health while it stays alive.
 	const start = yield* computer
-		.spawn({ cmd: `exec ${config.start}`, cwd: APP_DIR, env: config.env, log: "app.log" })
+		.spawn({ cmd: `exec ${config.start}`, cwd: appDir, env: config.env, log: "app.log" })
 		.pipe(Effect.catch(asBoot("start", "app.log")))
 	yield* run.log("boot.start", { cmd: config.start, pid: start.pid })
 	const bootDeadline = (yield* Clock.currentTimeMillis) + config.timeouts.bootSec * 1000
