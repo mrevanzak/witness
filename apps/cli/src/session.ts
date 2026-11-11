@@ -250,7 +250,8 @@ export const sessionHost = Effect.fnUntraced(function* (runDir: string, idleMs: 
 				sha: side.sha,
 				side: Option.getOrElse(side.state, () => "single" as const),
 			}))
-			yield* Console.log(`session ready: ${recorder.runDir}`)
+			// The dir `witness act --run` takes. The before side records into <runDir>/before, which has no driver.json.
+			yield* Console.log(`session ready: ${runDir}`)
 			const idle = Effect.gen(function* () {
 				for (;;) {
 					yield* Effect.sleep("5 seconds")
