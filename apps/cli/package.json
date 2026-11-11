@@ -33,6 +33,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "0.135.0",
     "@effect/platform-node": "4.0.5",
+    "@effect/platform-node-shared": "4.0.5",
     "@remotion/bundler": "4.0.532",
     "@remotion/google-fonts": "4.0.532",
     "@remotion/renderer": "4.0.532",

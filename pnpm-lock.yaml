@@ -68,9 +68,12 @@ importers:
       '@effect/platform-node':
         specifier: 4.0.5
         version: 4.0.5(effect@4.0.5)(redis@6.3.0(@opentelemetry/api@1.9.1))
+      '@effect/platform-node-shared':
+        specifier: 4.0.5
+        version: 4.0.5(effect@4.0.5)
       '@remotion/bundler':
         specifier: 4.0.532
-        version: 4.0.532(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
+        version: 4.0.532(postcss@8.5.31)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       '@remotion/google-fonts':
         specifier: 4.0.532
         version: 4.0.532(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
@@ -187,7 +190,7 @@ importers:
     dependencies:
       '@remotion/bundler':
         specifier: 4.0.532
-        version: 4.0.532(postcss@8.5.31)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
+        version: 4.0.532(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       '@remotion/google-fonts':
         specifier: 4.0.532
         version: 4.0.532(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
