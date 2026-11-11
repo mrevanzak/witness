@@ -12,6 +12,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process"
 export const START = "<!-- witness:start -->"
 export const END = "<!-- witness:end -->"
 const MEDIA = /\.\/[A-Za-z0-9._/-]+\.(?:jpe?g|png|gif|mp4|mov|webm)/g
+const SPACE_ID = /^\d+$/
 
 /** Publishing failed (gh, Ego upload, or a missing file). */
 export class PublishError extends Schema.TaggedError<PublishError>()("PublishError", { message: Schema.String }) {}
@@ -37,16 +38,24 @@ export const placeSection = (body: string, section: string): string => {
 export const referencedMedia = (markdown: string): readonly string[] => [...new Set(markdown.match(MEDIA) ?? [])]
 
 /**
+ * `--ego-space` as Ego's taskSpace() takes it: digits are a space id, anything
+ * else a space name. A quoted "7" would open a new space named 7. Pure.
+ */
+export const spaceArg = (space: string): string => (SPACE_ID.test(space) ? space : JSON.stringify(space))
+
+/**
  * The Ego script that attaches files to a PR's comment box and reads back the
  * user-attachments URLs GitHub inserts; the comment is never submitted, and the
  * box is cleared afterwards.
  */
 export const uploadScript = (space: string, prUrl: string, files: readonly string[]) => `
-const space = await taskSpace(${JSON.stringify(space)});
+const space = await taskSpace(${spaceArg(space)});
 const page = await space.newPage();
-const BOX = '#new_comment_field, textarea[name="comment[body]"]';
+// The last selector is GitHub's current comment box, a React textarea with a generated id.
+const BOX = '#new_comment_field, textarea[name="comment[body]"], textarea[placeholder="Leave a comment"]';
 const urls = () => page.evaluate((sel) => [...(document.querySelector(sel)?.value ?? "").matchAll(/https:\\/\\/github\\.com\\/user-attachments\\/assets\\/[0-9a-fA-F-]+/g)].map((m) => m[0]), BOX);
-const clear = () => page.evaluate((sel) => { const t = document.querySelector(sel); if (t) { t.value = ""; t.dispatchEvent(new Event("input", { bubbles: true })); } }, BOX);
+// React ignores a plain \`t.value = ""\`; only the native setter makes it see the box as empty.
+const clear = () => page.evaluate((sel) => { const t = document.querySelector(sel); if (t) { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(t, ""); t.dispatchEvent(new Event("input", { bubbles: true })); } }, BOX);
 try {
 	await page.goto(${JSON.stringify(prUrl)}, { timeout: 60000 });
 	await page.waitForFunction((sel) => !!document.querySelector(sel), BOX, { timeout: 30000 });
@@ -130,13 +139,21 @@ export const publish = Effect.fn("publish")(function* (o: {
 			prUrl,
 			todo.map((f) => f.abs)
 		)
-		const output = yield* spawner
-			.string(
+		// Ego prints the script's console.log on stderr, so the UPLOADED line is read from both streams.
+		const output = yield* Effect.gen(function* () {
+			const handle = yield* spawner.spawn(
 				ChildProcess.make("ego-browser", ["nodejs"], {
 					stdin: { stream: Stream.make(new TextEncoder().encode(script)) },
 				})
 			)
-			.pipe(Effect.mapError((e) => new PublishError({ message: `ego-browser: ${e.message}` })))
+			const [out, err] = yield* Effect.all([Stream.mkUint8Array(handle.stdout), Stream.mkUint8Array(handle.stderr)], {
+				concurrency: 2,
+			})
+			return `${new TextDecoder().decode(out)}\n${new TextDecoder().decode(err)}`
+		}).pipe(
+			Effect.scoped,
+			Effect.mapError((e) => new PublishError({ message: `ego-browser: ${e.message}` }))
+		)
 		const line = output.split("\n").find((l) => l.startsWith("UPLOADED "))
 		if (!line) {
 			return yield* new PublishError({ message: `upload produced no URLs:\n${output.slice(-1500)}` })
