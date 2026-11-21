@@ -58,7 +58,7 @@ describe("hostedSection", () => {
 		expect(md).toContain("| ✅ pass | C1 C1 works | 1:05–1:12 | saw a \\| b |")
 		expect(md).toContain("| ✅ pass | C2 (regression) C2 works | – |")
 		expect(md).toContain("- Seeded one todo")
-		// Nothing for `publish` to upload, so it needs no Ego browser.
+		// Nothing for `publish` to attach.
 		expect(referencedMedia(md)).toEqual([])
 	})
 

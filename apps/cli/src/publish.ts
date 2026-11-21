@@ -1,20 +1,20 @@
 // `witness publish`: put a report on a PR.
-//   1. upload every ./file the report references through the PR's comment box in
-//      Ego (a browser signed in to GitHub) -> GitHub user-attachments URLs
-//   2. swap the ./paths for those URLs
-//   3. the current gh user's PR -> section in the description between
+//   1. gh (2.99+) uploads every ./file the report references with --attach and
+//      repoints each reference at its GitHub URL
+//   2. the current gh user's PR -> section in the description between
 //      <!-- witness:start/end --> (replaced on re-runs, above bot footers);
 //      someone else's PR -> a new comment.
 // --dry-run stops before any upload or GitHub write.
-import { Console, Effect, FileSystem, Option, Path, Schema, Stream } from "effect"
+import { Console, Effect, FileSystem, Path, Schema } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 
 export const START = "<!-- witness:start -->"
 export const END = "<!-- witness:end -->"
 const MEDIA = /\.\/[A-Za-z0-9._/-]+\.(?:jpe?g|png|gif|mp4|mov|webm)/g
-const SPACE_ID = /^\d+$/
+const VIDEO_LINE = /^(\.\/[A-Za-z0-9._/-]+\.(?:mp4|mov|webm))$/gm
+const MAX_ATTACH = 50
 
-/** Publishing failed (gh, Ego upload, or a missing file). */
+/** Publishing failed (gh, or a missing file). */
 export class PublishError extends Schema.TaggedError<PublishError>()("PublishError", { message: Schema.String }) {}
 
 /** Inserts or replaces the marked section in a PR body. Pure. */
@@ -38,54 +38,16 @@ export const placeSection = (body: string, section: string): string => {
 export const referencedMedia = (markdown: string): readonly string[] => [...new Set(markdown.match(MEDIA) ?? [])]
 
 /**
- * `--ego-space` as Ego's taskSpace() takes it: digits are a space id, anything
- * else a space name. A quoted "7" would open a new space named 7. Pure.
+ * Turns a video path standing alone on a line into an embed, the one form gh
+ * rewrites to a bare URL that GitHub renders as a player. Pure.
  */
-export const spaceArg = (space: string): string => (SPACE_ID.test(space) ? space : JSON.stringify(space))
-
-/**
- * The Ego script that attaches files to a PR's comment box and reads back the
- * user-attachments URLs GitHub inserts; the comment is never submitted, and the
- * box is cleared afterwards.
- */
-export const uploadScript = (space: string, prUrl: string, files: readonly string[]) => `
-const space = await taskSpace(${spaceArg(space)});
-const page = await space.newPage();
-// The last selector is GitHub's current comment box, a React textarea with a generated id.
-const BOX = '#new_comment_field, textarea[name="comment[body]"], textarea[placeholder="Leave a comment"]';
-const urls = () => page.evaluate((sel) => [...(document.querySelector(sel)?.value ?? "").matchAll(/https:\\/\\/github\\.com\\/user-attachments\\/assets\\/[0-9a-fA-F-]+/g)].map((m) => m[0]), BOX);
-// React ignores a plain \`t.value = ""\`; only the native setter makes it see the box as empty.
-const clear = () => page.evaluate((sel) => { const t = document.querySelector(sel); if (t) { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(t, ""); t.dispatchEvent(new Event("input", { bubbles: true })); } }, BOX);
-try {
-	await page.goto(${JSON.stringify(prUrl)}, { timeout: 60000 });
-	await page.waitForFunction((sel) => !!document.querySelector(sel), BOX, { timeout: 30000 });
-	await clear();
-	const out = {};
-	for (const file of ${JSON.stringify(files)}) {
-		const before = (await urls()).length;
-		const chooser = page.waitForFileChooser({ timeout: 10000 });
-		await page.click('loc=role:button[name*="Paste, drop, or click"]', { label: "attach a file to the comment box" });
-		await (await chooser).setFiles(file);
-		let found = [];
-		for (let i = 0; i < 120 && found.length <= before; i++) { await page.waitForTimeout(500); found = await urls(); }
-		if (found.length <= before) throw new Error("no attachment URL for " + file);
-		out[file] = found[found.length - 1];
-	}
-	await clear();
-	console.log("UPLOADED " + JSON.stringify(out));
-} finally {
-	await page.close().catch(() => {});
-}
-`
-
-const Uploaded = Schema.Record(Schema.String, Schema.String)
+export const embedVideos = (markdown: string): string => markdown.replace(VIDEO_LINE, "![Walkthrough]($1)")
 
 export const publish = Effect.fn("publish")(function* (o: {
 	readonly pr: string
 	readonly report: string
 	readonly repo: string
 	readonly mode: "auto" | "description" | "comment"
-	readonly egoSpace: Option.Option<string>
 	readonly dryRun: boolean
 }) {
 	const fs = yield* FileSystem.FileSystem
@@ -100,12 +62,18 @@ export const publish = Effect.fn("publish")(function* (o: {
 
 	const report = path.resolve(o.report)
 	const base = path.dirname(report)
-	let md = yield* fs.readFileString(report)
+	// Body files live beside the report: gh resolves their ./references from there.
+	const md = embedVideos(yield* fs.readFileString(report))
 	const files = referencedMedia(md).map((ref) => ({ abs: path.join(base, ref), ref }))
 	for (const f of files) {
 		if (!(yield* fs.exists(f.abs))) {
 			return yield* new PublishError({ message: `report references a missing file: ${f.ref}` })
 		}
+	}
+	if (files.length > MAX_ATTACH) {
+		return yield* new PublishError({
+			message: `gh attaches at most ${MAX_ATTACH} files; the report has ${files.length}`,
+		})
 	}
 
 	let mode = o.mode
@@ -117,66 +85,20 @@ export const publish = Effect.fn("publish")(function* (o: {
 	}
 	if (o.dryRun) {
 		return yield* Console.log(
-			`dry run: would upload ${files.length} file(s) and update the ${mode}:\n${files.map((f) => `  ${f.ref}`).join("\n")}`
+			`dry run: would attach ${files.length} file(s) and update the ${mode}:\n${files.map((f) => `  ${f.ref}`).join("\n")}`
 		)
 	}
 
-	// Upload once per report; a cached result is reused on re-runs.
-	const cache = path.join(base, "upload-result.json")
-	let urls: Record<string, string> = (yield* fs.exists(cache))
-		? yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Uploaded))(yield* fs.readFileString(cache))
-		: {}
-	const todo = files.filter((f) => !urls[f.abs])
-	if (todo.length) {
-		if (Option.isNone(o.egoSpace)) {
-			return yield* new PublishError({
-				message: "--ego-space <id> is required to upload (an Ego task space signed in to GitHub)",
-			})
-		}
-		const prUrl = yield* gh(["pr", "view", o.pr, "--json", "url", "-q", ".url"])
-		const script = uploadScript(
-			o.egoSpace.value,
-			prUrl,
-			todo.map((f) => f.abs)
-		)
-		// Ego prints the script's console.log on stderr, so the UPLOADED line is read from both streams.
-		const output = yield* Effect.gen(function* () {
-			const handle = yield* spawner.spawn(
-				ChildProcess.make("ego-browser", ["nodejs"], {
-					stdin: { stream: Stream.make(new TextEncoder().encode(script)) },
-				})
-			)
-			const [out, err] = yield* Effect.all([Stream.mkUint8Array(handle.stdout), Stream.mkUint8Array(handle.stderr)], {
-				concurrency: 2,
-			})
-			return `${new TextDecoder().decode(out)}\n${new TextDecoder().decode(err)}`
-		}).pipe(
-			Effect.scoped,
-			Effect.mapError((e) => new PublishError({ message: `ego-browser: ${e.message}` }))
-		)
-		const line = output.split("\n").find((l) => l.startsWith("UPLOADED "))
-		if (!line) {
-			return yield* new PublishError({ message: `upload produced no URLs:\n${output.slice(-1500)}` })
-		}
-		urls = {
-			...urls,
-			...(yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Uploaded))(line.slice("UPLOADED ".length))),
-		}
-		yield* fs.writeFileString(cache, JSON.stringify(urls, null, 2))
-	}
-	for (const f of files) {
-		md = md.split(f.ref).join(urls[f.abs] ?? f.ref)
-	}
-	const section = path.join(base, "pr-section.md")
-	yield* fs.writeFileString(section, md)
-
+	const attach = files.flatMap((f) => ["--attach", f.abs])
 	if (mode === "comment") {
-		yield* gh(["pr", "comment", o.pr, "--body-file", section])
+		const section = path.join(base, "pr-section.md")
+		yield* fs.writeFileString(section, md)
+		yield* gh(["pr", "comment", o.pr, "--body-file", section, ...attach])
 		return yield* Console.log(`commented on PR #${o.pr}`)
 	}
 	const before = yield* gh(["pr", "view", o.pr, "--json", "body", "-q", ".body"])
 	yield* fs.writeFileString(path.join(base, "pr-body.before.md"), before)
 	yield* fs.writeFileString(path.join(base, "pr-body.after.md"), placeSection(before, md))
-	yield* gh(["pr", "edit", o.pr, "--body-file", path.join(base, "pr-body.after.md")])
+	yield* gh(["pr", "edit", o.pr, "--body-file", path.join(base, "pr-body.after.md"), ...attach])
 	yield* Console.log(`updated the description of PR #${o.pr} (previous body in pr-body.before.md)`)
 })

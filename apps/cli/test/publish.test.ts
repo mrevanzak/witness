@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { END, placeSection, referencedMedia, START, spaceArg, uploadScript } from "../src/publish.ts"
+import { END, embedVideos, placeSection, referencedMedia, START } from "../src/publish.ts"
 
 describe("placeSection", () => {
 	it("inserts above a bot footer", () => {
@@ -26,12 +26,10 @@ describe("referencedMedia", () => {
 	})
 })
 
-describe("uploadScript", () => {
-	it("resumes a space by id when --ego-space is a number", () => {
-		expect(spaceArg("7")).toBe("7")
-		expect(uploadScript("7", "https://github.com/o/r/pull/1", [])).toContain("await taskSpace(7);")
-	})
-	it("opens a space by name otherwise", () => {
-		expect(spaceArg("pr 12 evidence")).toBe('"pr 12 evidence"')
+describe("embedVideos", () => {
+	it("embeds a video alone on its line and leaves other references", () => {
+		expect(embedVideos("Walkthrough:\n\n./polished.mp4\n\nsee ./polished.mp4 here\n![a](./b.png)")).toBe(
+			"Walkthrough:\n\n![Walkthrough](./polished.mp4)\n\nsee ./polished.mp4 here\n![a](./b.png)"
+		)
 	})
 })

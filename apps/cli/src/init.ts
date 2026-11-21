@@ -331,7 +331,7 @@ export const EVIDENCE_CHOICES: ReadonlyArray<{
 }> = [
 	{
 		description:
-			"Stills and the video are uploaded into the PR description (or a comment on someone else's PR). Needs an Ego browser signed in to GitHub.",
+			"Stills and the video are uploaded into the PR description (or a comment on someone else's PR). Needs gh 2.99 or later.",
 		title: "GitHub PR",
 		value: "pr",
 	},

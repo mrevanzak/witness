@@ -115,17 +115,17 @@ The config's `evidence` key says where evidence goes. If it is missing (an older
 
 | `evidence` | Where it lands | Needs |
 |---|---|---|
-| `pr` | Stills and the video uploaded into the PR | an Ego task space signed in to GitHub |
+| `pr` | Stills and the video uploaded into the PR | `gh` 2.99 or later (`gh --version`) |
 | `hosted` | An unlisted report page (video with jump-to criteria, stills, logs); the PR gets the verdict, the criteria table and a link | `WITNESS_REPORTS_URL`, `WITNESS_UPLOAD_TOKEN` |
 
 **pr:**
 
 ```bash
 witness publish --pr <N> --report <report.md> --repo <repo> --dry-run
-witness publish --pr <N> --report <report.md> --repo <repo> --ego-space <id>
+witness publish --pr <N> --report <report.md> --repo <repo>
 ```
 
-Uploads media through the PR's comment box in Ego and swaps paths for `user-attachments` URLs.
+Hands every `./file` the report references to `gh pr edit`/`gh pr comment --attach`, which uploads it and points the reference at its GitHub URL. A video alone on a line becomes a player.
 
 **hosted:**
 
@@ -135,7 +135,7 @@ witness publish --pr <N> --report <runDir>/hosted-section.md --repo <repo> --dry
 witness publish --pr <N> --report <runDir>/hosted-section.md --repo <repo>
 ```
 
-`upload` prints the report URL and writes `hosted-section.md` (in the after run for a pair). That section links to the page instead of embedding local files, so `publish` needs no Ego. If the user only wants the link, give them the URL and stop there.
+`upload` prints the report URL and writes `hosted-section.md` (in the after run for a pair). That section links to the page instead of embedding local files, so `publish` attaches nothing. If the user only wants the link, give them the URL and stop there.
 
 Either way, the current user's PR gets the section in its description between `<!-- witness:start/end -->` (replaced on re-runs, above bot footers); anyone else's PR gets a comment. Confirm with the user before the non-dry run; then open the PR (and the hosted page) and check each image loads and the video plays.
 

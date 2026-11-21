@@ -198,7 +198,7 @@ Stills and the video reach a PR in one of two ways. The agent asks which one the
 
 | `evidence` | Where it lands | Needs |
 |---|---|---|
-| `pr` | stills and the video uploaded into the PR | an Ego browser signed in to GitHub |
+| `pr` | stills and the video uploaded into the PR | `gh` 2.99 or later |
 | `hosted` | an unlisted report page; the PR gets the verdict, the criteria table and a link | the Worker below, `WITNESS_REPORTS_URL`, `WITNESS_UPLOAD_TOKEN` |
 
 The report goes into your own PR's description (between `<!-- witness:start/end -->`, replaced on re-runs) and as a comment on anyone else's. The agent shows you a dry run and asks before it writes anything.
@@ -251,5 +251,4 @@ Witness is MIT licensed. One dependency needs a look before you adopt it: Remoti
 
 - [Cursor's cloud agents](https://cursor.com) for the idea of attaching proof to a change.
 - [Rakazo](https://github.com/elie222/rakazo) for the one-computer-per-agent design: a plain container with Xvfb, a window manager and Chromium, behind a small control API.
-- [tonkotsuboy/github-upload-image-to-pr](https://github.com/tonkotsuboy/github-upload-image-to-pr) for the trick of uploading PR media through the comment box.
 - [noVNC](https://novnc.com) for the live view.

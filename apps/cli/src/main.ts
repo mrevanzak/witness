@@ -404,10 +404,6 @@ const publishCmd = Command.make(
 	"publish",
 	{
 		dryRun: Flag.Boolean("dry-run").pipe(Flag.withDefault(false)),
-		egoSpace: Flag.String("ego-space").pipe(
-			Flag.withDescription("Ego task space signed in to GitHub (uploads media)"),
-			Flag.optional
-		),
 		mode: Flag.Literals("mode", ["auto", "description", "comment"]).pipe(Flag.withDefault("auto")),
 		pr: Flag.String("pr").pipe(Flag.withDescription("PR number")),
 		repo: Flag.String("repo").pipe(Flag.withDefault(".")),
